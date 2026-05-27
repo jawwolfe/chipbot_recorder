@@ -25,7 +25,7 @@
 
 // Recording constraints
 const int recordingTimeLimit = 30000; // 30 seconds limit
-const float soundThresholdMultiplier = 1.3; // Starts recording if 1.5x louder than quiet
+const float soundThresholdMultiplier = 1.4; // Starts recording if 1.5x louder than quiet
 const int silenceTimeout = 5000; // Stop if silent for 5 seconds
 
 File file;
@@ -137,39 +137,33 @@ void setup() {
 }
 
 void loop() {  
-  float currentVolume = readMicrophoneVolume();
- 
+  // 1. If NOT recording, we sample the microphone to look for the trigger sound
   if (!isRecording) {
+    float currentVolume = readMicrophoneVolume();
+    
     if (currentVolume > (baselineNoise * soundThresholdMultiplier)) {
-      Serial.println("Start Recroding!");
+      Serial.println("Start Recording!");
       startRecording();
       recordingStartTime = millis();
       lastSoundTime = millis();
     }
-
-    
-
-  } else {
-
-    // We are recording, check stop conditions
+  } 
+  // 2. If WE ARE recording, we process audio inside appendAudioToSD
+  else {
     unsigned long elapsed = millis() - recordingStartTime;
-    float silenceDuration = millis() - lastSoundTime;
+    unsigned long silenceDuration = millis() - lastSoundTime; // Use unsigned long for millis
+
     // Check time limit OR silence limit
     if (elapsed >= recordingTimeLimit || silenceDuration >= silenceTimeout) {
       stopRecording();
     } else {
-        // Read from I2S and write to WAV
-
-        appendAudioToSD();
-        digitalWrite(LED_PIN, HIGH);
-
-      if (currentVolume > (baselineNoise * soundThresholdMultiplier)) {
-        Serial.println("reset last sound now");
-        lastSoundTime = millis(); // Reset silence timer if sound continues
+      // appendAudioToSD now returns true if it detected sound, false if quiet
+      bool soundDetected = appendAudioToSD();
+      
+      if (soundDetected) {
+        lastSoundTime = millis(); // Reset silence timer
       }
     }
-
-    digitalWrite(LED_PIN, LOW);
   }
 }
 
@@ -182,17 +176,20 @@ void calibrateNoiseFloor() {
   baselineNoise = sum / 100.0;
 }
 
-// Helper to calculate RMS or Peak volume from raw PCM data
+// Helper to calculate RMS from raw PCM data (Used only when idling)
 float readMicrophoneVolume() {
   int32_t raw_samples[512];
   size_t bytes_read;
   i2s_read(I2S_NUM_0, (void**)raw_samples, sizeof(raw_samples), &bytes_read, portMAX_DELAY);
   
-  // Calculate RMS
   float sum_squares = 0;
   int samples_count = bytes_read / sizeof(int32_t);
+  if (samples_count == 0) return 0;
+
   for (int i = 0; i < samples_count; i++) {
-    float sample = (float)raw_samples[i];
+    // FIX: Downsample to 16-bit exactly like you do during recording
+    int16_t sample16 = (int16_t)(raw_samples[i] >> 14); 
+    float sample = (float)sample16;
     sum_squares += sample * sample;
   }
   return sqrt(sum_squares / samples_count);
@@ -216,6 +213,7 @@ void startRecording() {
   writeWavHeader(file, SAMPLE_RATE, 16, 1, 0);
 
   isRecording = true;
+  digitalWrite(LED_PIN, HIGH); // Turn LED on when starting
 }
 
 void stopRecording() {
@@ -226,25 +224,38 @@ void stopRecording() {
   writeWavHeader(file, SAMPLE_RATE, 16, 1, fileSize);
   file.close();
   Serial.println("Recording is Complete!");
-  digitalWrite(LED_PIN, LOW); 
+  digitalWrite(LED_PIN, LOW); // Turn LED off when done
 }
 
-void appendAudioToSD() {
-
-    Serial.println("writing file");
-    digitalWrite(LED_PIN, HIGH);
-
+// Fixed function: Writes to SD AND checks volume at the same time
+bool appendAudioToSD() {
     size_t bytesRead;
     int32_t i2sBuffer[256]; 
  
+    // FIXED: Changed I2S_NUM to I2S_NUM_0
     i2s_read(I2S_NUM_0, (void *)i2sBuffer, sizeof(i2sBuffer), &bytesRead, portMAX_DELAY);
 
     int16_t samples16[256];
     int samplesCount = bytesRead / 4;
+    if (samplesCount == 0) return false;
+
+    float sum_squares = 0;
 
     for (int i = 0; i < samplesCount; i++) {
+      // Downsample 32-bit to 16-bit
       samples16[i] = (int16_t)(i2sBuffer[i] >> 14);
+      
+      // Calculate volume on the fly
+      float sample = (float)samples16[i];
+      sum_squares += sample * sample;
     }
 
+    // Write data to SD Card
     file.write((uint8_t *)samples16, samplesCount * 2);
+
+    // Calculate current RMS volume of this chunk
+    float currentVolume = sqrt(sum_squares / samplesCount);
+
+    // Return true if volume is above the threshold
+    return (currentVolume > (baselineNoise * soundThresholdMultiplier));
 }
