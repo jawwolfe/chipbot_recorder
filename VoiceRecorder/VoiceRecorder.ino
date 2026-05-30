@@ -117,7 +117,7 @@ void loop() {
     float currentVolume = readMicrophoneVolume();
     float currentVolumeSquared = currentVolume * currentVolume;
     
-    if (currentVolumeSquared > (baselineNoiseSquared * soundThresholdMultiplier * soundThresholdMultiplier)) {
+    if (currentVolumeSquared > (baselineNoiseSquared * soundThresholdMultiplier)) {
       Serial.println("Threshold exceeded! Start Recording...");
       startRecording();
       recordingStartTime = millis();
@@ -160,7 +160,7 @@ float readMicrophoneVolume() {
   if (samples_count == 0) return 0;
 
   for (int i = 0; i < samples_count; i++) {
-    int16_t sample16 = (int16_t)(raw_samples[i] >> 16); 
+    int16_t sample16 = (int16_t)(raw_samples[i] >> 14); 
     float sample = (float)sample16;
     sum_squares += sample * sample;
   }
@@ -217,7 +217,7 @@ bool appendAudioToSD() {
     float sum_squares = 0;
 
     for (int i = 0; i < samplesCount; i++) {
-      int16_t sample16 = (int16_t)(i2sBuffer[i] >> 16);
+      int16_t sample16 = (int16_t)(i2sBuffer[i] >> 14);
       
       // Accumulate sample into the larger RAM block buffer
       ramAudioBuffer[ramBufferIndex++] = sample16;
@@ -233,7 +233,7 @@ bool appendAudioToSD() {
     }
    
     float meanSquare = sum_squares / samplesCount;
-    float triggerThreshold = baselineNoiseSquared * soundThresholdMultiplier * soundThresholdMultiplier;
+    float triggerThreshold = baselineNoiseSquared * soundThresholdMultiplier;
 
     return (meanSquare > triggerThreshold);
 }
