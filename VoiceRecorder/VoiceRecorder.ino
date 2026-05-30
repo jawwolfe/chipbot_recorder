@@ -6,8 +6,6 @@
 #include <Wire.h>
 #include <RTClib.h>
 
-//#define GAIN_FACTOR 2.5
-
 #define I2S_BCK_PIN 4
 #define I2S_WS_PIN 5
 #define I2S_SD_PIN 6
@@ -31,7 +29,7 @@
 
 // Recording constraints
 const int recordingTimeLimit = 30000; // 30 seconds limit
-const float soundThresholdMultiplier = 1.4; // Starts recording if 1.5x louder than quiet
+const float soundThresholdMultiplier = 1.3; // Starts recording if 1.5x louder than quiet
 const int silenceTimeout = 5000; // Stop if silent for 5 seconds
 
 File file;
@@ -152,7 +150,7 @@ void setup() {
   i2s_set_pin(I2S_NUM, &pin_config);
   i2s_zero_dma_buffer(I2S_NUM);
   calibrateNoiseFloor();
-  Serial.println("System is Ready. Click the utton for Recording.");
+  Serial.println("System is Ready. Waiting for sound trigger");
 }
 
 void loop() {  
@@ -206,7 +204,7 @@ float readMicrophoneVolume() {
   if (samples_count == 0) return 0;
 
   for (int i = 0; i < samples_count; i++) {
-    int16_t sample16 = (int16_t)(raw_samples[i] >> 16); 
+    int16_t sample16 = (int16_t)(raw_samples[i] >> 14); 
     float sample = (float)sample16;
     sum_squares += sample * sample;
   }
@@ -261,7 +259,7 @@ bool appendAudioToSD() {
 
     for (int i = 0; i < samplesCount; i++) {
       // Downsample 32-bit to 16-bit
-      samples16[i] = (int16_t)(i2sBuffer[i] >> 16);
+      samples16[i] = (int16_t)(i2sBuffer[i] >> 14);
       
       // Calculate volume on the fly
       float sample = (float)samples16[i];
