@@ -17,7 +17,6 @@
 #define SD_MISO_PIN 13
 #define SD_CLK_PIN 12 //also know as SCK pin 
 
-//#define BUTTON_PIN 8
 #define LED_PIN 3
 #define LED_PIN_2 17
 
@@ -119,8 +118,7 @@ void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels,
 }
 
 void setup() {
-  Serial.begin(9600);
-  //pinMode(BUTTON_PIN, INPUT_PULLUP);
+  Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
   pinMode(LED_PIN_2, OUTPUT);
   digitalWrite(LED_PIN, LOW);
@@ -208,8 +206,7 @@ float readMicrophoneVolume() {
   if (samples_count == 0) return 0;
 
   for (int i = 0; i < samples_count; i++) {
-    // FIX: Downsample to 16-bit exactly like you do during recording
-    int16_t sample16 = (int16_t)(raw_samples[i] >> 14); 
+    int16_t sample16 = (int16_t)(raw_samples[i] >> 16); 
     float sample = (float)sample16;
     sum_squares += sample * sample;
   }
@@ -217,11 +214,8 @@ float readMicrophoneVolume() {
 }
 
 void startRecording() { 
-    // Fetch the current date and time from the DS3231 (Now rtc works perfectly!)
+  // Fetch the current date and time from the DS3231 
   DateTime now = rtc.now();
-
-  // Format: /rec1_2026-05-27.wav (ISO date format)
-  // Note: Do not use ":" inside filenames on FAT32 SD cards, as it is an invalid character!
   snprintf(filename, sizeof(filename), "/rec_%04d-%02d-%02d_%02d_%02d_%02d.wav", 
           now.year(), 
           now.month(), 
@@ -260,7 +254,6 @@ bool appendAudioToSD() {
     size_t bytesRead;
     int32_t i2sBuffer[256]; 
  
-    // FIXED: Changed I2S_NUM to I2S_NUM_0
     i2s_read(I2S_NUM_0, (void *)i2sBuffer, sizeof(i2sBuffer), &bytesRead, portMAX_DELAY);
 
     int16_t samples16[256];
