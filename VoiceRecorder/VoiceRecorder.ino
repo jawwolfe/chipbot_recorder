@@ -18,8 +18,9 @@
 #define SD_MISO_PIN 13
 #define SD_CLK_PIN 12 //also know as SCK pin 
 
-#define LED_PIN 3
-#define LED_PIN_2 17
+#define LED_PIN 3 // blue led for recording or listening
+#define LED_PIN_2 17 // yellow led for SD disc status full or not ready
+#define LED_PIN_3 15 // red led for battery voltage checks
 
 //clock RTC
 #define I2C_SDA 8
@@ -47,6 +48,10 @@ const int STOP_2_MIN = 15;
 const int recordingTimeLimit = 30000; // 30 seconds limit
 const float soundThresholdMultiplier = 1.3; // Starts recording if 1.5x louder than quiet
 const int silenceTimeout = 5000; // Stop if silent for 5 seconds
+const long int_samp_blnk = 1000;
+unsigned long prevMillisBlnk = 0;    
+int ledState = LOW;  
+const int ledPin = 17;
 
 File file;
 bool isRecording = false;
@@ -223,9 +228,9 @@ void setup() {
     if (!SD.begin(SD_CS_PIN)) {
       Serial.println("SD Card not Initialize!");
       while (1) {
-        digitalWrite(LED_PIN, HIGH);
+        digitalWrite(LED_PIN_2, HIGH);
         delay(500);
-        digitalWrite(LED_PIN, LOW);
+        digitalWrite(LED_PIN_2, LOW);
         delay(500);
       }
     }
@@ -267,6 +272,22 @@ void setup() {
 void loop() {  
   // 1. If NOT recording, we sample the microphone to look for the trigger sound
   if (!isRecording) {
+    //put the slow blink of blue LED_PIN using millis here
+    unsigned long curMillisBlnk = millis();
+    // Check if the time difference is greater than or equal to the interval
+    if (curMillisBlnk - prevMillisBlnk >= int_samp_blnk) {
+      // Save the last time you blinked the LED
+      prevMillisBlnk = curMillisBlnk;
+      // If the LED is off, turn it on, and vice-versa
+      if (ledState == LOW) {
+        ledState = HIGH;
+      } else {
+        ledState = LOW;
+      }
+      // Update the physical LED pin with the new state
+      digitalWrite(ledPin, ledState);
+    }
+
     float currentVolume = readMicrophoneVolume();
     
     if (currentVolume > (baselineNoise * soundThresholdMultiplier)) {
@@ -414,10 +435,18 @@ bool appendAudioToSD() {
           Serial.println("Error Cause: Insufficient storage space on SD card.");
           // Halt execution or trigger a system alert/LED here
           digitalWrite(LED_PIN, LOW); 
-          digitalWrite(LED_PIN_2, HIGH);
-          while (true) { delay(1000); } 
+          while (true) { 
+            digitalWrite(LED_PIN_2, HIGH);
+            delay(1000); 
+            digitalWrite(LED_PIN_2, LOW);
+          } 
       } else {
           Serial.println("Error Cause: Hardware disconnect or file corruption.");
+          while (true) { 
+            digitalWrite(LED_PIN_2, HIGH);
+            delay(1000); 
+            digitalWrite(LED_PIN_2, LOW);
+          } 
       }
     }
    
