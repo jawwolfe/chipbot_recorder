@@ -20,7 +20,7 @@
 
 #define LED_PIN 3 // blue led for recording or listening
 #define LED_PIN_2 17 // yellow led for SD disc status full or not ready
-#define LED_PIN_3 15 // red led for battery voltage checks
+#define LED_PIN_3 7 // red led for battery voltage checks
 
 //clock RTC
 #define I2C_SDA 8
@@ -32,6 +32,8 @@
 #define MY_CLOCK 4000000
 #define SERVICE_UUID        "fdcff45e-438b-4a62-acf6-dbd852aae4b1"
 #define CHARACTERISTIC_UUID "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072"
+
+#define BAT_PIN 18
 
 // Define your two daily wake-up windows (in 24-hour format)
 const int START_1_HR = 8;   // Window 1 Start: 08:30
