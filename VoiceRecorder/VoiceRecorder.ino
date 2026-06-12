@@ -1,3 +1,4 @@
+#include <dummy.h>
 #include <Arduino.h>
 #include <SD.h>
 #include <SPI.h>
@@ -8,6 +9,7 @@
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
+#include <EEPROM.h>
 
 #define I2S_BCK_PIN 4
 #define I2S_WS_PIN 5
@@ -22,18 +24,21 @@
 #define LED_PIN_2 17 // yellow led for SD disc status full or not ready
 #define LED_PIN_3 7 // red led for battery voltage checks
 
-//clock RTC
 #define I2C_SDA 8
 #define I2C_SCL 9
-
 #define SAMPLE_RATE 48000  // DVD quality
 #define I2S_NUM I2S_NUM_0
 #define WAVE_HEADER_SIZE 44
 #define MY_CLOCK 4000000
 #define SERVICE_UUID        "fdcff45e-438b-4a62-acf6-dbd852aae4b1"
 #define CHARACTERISTIC_UUID "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072"
-
 #define BAT_PIN 18
+
+// EEPROM string length
+const int MAX_STRING_LENGTH = 16; 
+// Choose an EEPROM starting address
+const int eepromAddress = 0; 
+
 
 // Define your two daily wake-up windows (in 24-hour format)
 const int START_1_HR = 8;   // Window 1 Start: 08:30
@@ -43,7 +48,7 @@ const int STOP_1_MIN = 30;
 
 const int START_2_HR = 16;  // Window 2 Start: 17:00
 const int START_2_MIN = 0;
-const int STOP_2_HR = 19;   // Window 2 End: 18:00
+const int STOP_2_HR = 23;   // Window 2 End: 18:00
 const int STOP_2_MIN = 15;
 
 // Recording constraints
@@ -181,30 +186,38 @@ void setup() {
   Serial.println(stop2);
   Serial.println(inWindow2);
 
+  if (!EEPROM.begin(MAX_STRING_LENGTH)) {
+    Serial.println("Failed to initialize EEPROM");
+    return;
+  }
+
+  //one time code to enter the unit id into the EEPROM as a config
+  //char charBuffer[MAX_STRING_LENGTH];
+  //String myString = "esp32_aww_unt01";  
+  //writeStringToEEPROM(eepromAddress, myString);
+  //Serial.println("String saved successfully.");
+  //String retrievedString = readStringFromEEPROM(eepromAddress);
+  //Serial.print("Retrieved String: ");
+  //Serial.println(retrievedString);
+
   if (inWindow1 || inWindow2) {
     // We are supposed to be awake! Proceed to void loop()
-    Serial.println("Inside an active window. Running loop()...");
-
-
-    Serial.println("Starting BLE work!");
-    // 1. Initialize the BLE device and give it a name
-    BLEDevice::init("ESP32S3_BLE_Wolfe_1");
-    // 2. Create the BLE Server
+    Serial.println("Inside active window starting BLE work!");
+    String retrievedString = readStringFromEEPROM(eepromAddress);
+    if (retrievedString.length() == 0) {
+      retrievedString = "esp32_aww_undef";
+    }
+    BLEDevice::init(retrievedString);
     BLEServer *pServer = BLEDevice::createServer();
-    // 3. Create the BLE Service using the UUID defined above
     BLEService *pService = pServer->createService(SERVICE_UUID);
-    // 4. Create a BLE Characteristic for that service
     BLECharacteristic *pCharacteristic = pService->createCharacteristic(
                                           CHARACTERISTIC_UUID,
                                           BLECharacteristic::PROPERTY_READ |
                                           BLECharacteristic::PROPERTY_WRITE
                                         );
-
-    // 5. Set an initial value for the characteristic
-    pCharacteristic->setValue("Hello from ESP32-S3 Wolfe 1!");
-    // 6. Start the service
-    pService->start();
-    // 7. Start advertising so scanners can find it
+    String initCharacteristic = "Hello from: " + retrievedString + "!";
+    pCharacteristic->setValue(initCharacteristic);
+        pService->start();
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setScanResponse(true);
@@ -215,7 +228,6 @@ void setup() {
     pAdvertising->setMaxInterval(0x0640);
       BLEDevice::startAdvertising();
     Serial.println("Characteristic defined! Now advertising...");
-    // 4. Power Optimization: Enable automatic Light Sleep
     // This allows the ESP32-S3 to automatically enter light sleep 
     // between BLE advertising intervals.
     esp_sleep_enable_timer_wakeup(1000000); // Optional: dynamic fallback
@@ -368,8 +380,10 @@ float readMicrophoneVolume() {
 void startRecording() { 
   // Fetch the current date and time from the DS3231 
   DateTime now = rtc.now();
-  snprintf(filename, sizeof(filename), "/rec_%04d-%02d-%02d_%02d_%02d_%02d.wav", 
-          now.year(), now.month(), now.day(), 
+  char deviceName[16];
+  strlcpy(deviceName, readStringFromEEPROM(eepromAddress).c_str(), sizeof(deviceName));
+  snprintf(filename, sizeof(filename), "/%s_%04d-%02d-%02d_%02d_%02d_%02d.wav", 
+          deviceName, now.year(), now.month(), now.day(), 
           now.hour(), now.minute(), now.second());
 
   Serial.print("Recording has started: ");
@@ -460,10 +474,30 @@ bool appendAudioToSD() {
           } 
       }
     }
-   
     // Calculate current RMS volume of this chunk
     float currentVolume = sqrt(sum_squares / samplesCount);
-
     // Return true if volume is above the threshold
     return (currentVolume > (baselineNoise * soundThresholdMultiplier));
+}
+
+// Function to get a String out of EEPROM safely
+String readStringFromEEPROM(int address) {
+  char charBuffer[MAX_STRING_LENGTH];
+  
+  // EEPROM.get reads the exact number of bytes needed to fill the char array
+  EEPROM.get(address, charBuffer);
+  
+  // Convert the character array back into a readable Arduino String object
+  return String(charBuffer);
+}
+void writeStringToEEPROM(int address, String data) {
+  char charBuffer[MAX_STRING_LENGTH];
+  
+  // Ensure the string fits inside our fixed buffer, leaving room for the null terminator '\0'
+  data.toCharArray(charBuffer, MAX_STRING_LENGTH);
+  
+  // EEPROM.put automatically loops through the char array bytes and updates them
+  EEPROM.put(address, charBuffer);
+  // CRITICAL FOR ESP32: Push the RAM buffer changes into actual Flash memory
+  EEPROM.commit();
 }
