@@ -67,6 +67,7 @@ const int SD_CS_PIN = 10;
 const int SD_MOSI_PIN = 11;
 const int SD_MISO_PIN = 13;
 const int SD_CLK_PIN = 12; //also know as SCK pin 
+// -- for blinking yellow light for disk error when recording --
 unsigned long startDiscError = 0;
 const unsigned long intDiscError = 10000;
 
@@ -74,10 +75,10 @@ const unsigned long intDiscError = 10000;
 const int LED_PIN = 3; // blue led for recording or listening
 const int LED_PIN_2 = 17; // yellow led for SD disc status full or not ready
 const int LED_PIN_3 = 7; // red led for battery voltage checks
-// -- used in disk check --
+// -- used in startup disk check --
 int ledState = LOW; 
 const int ledPin = 3;
-// -- used in recording --
+// -- used in recording long blink when sampling--
 const long int_samp_blnk = 1000;
 unsigned long prevMillisBlnk = 0;   
 
@@ -88,11 +89,11 @@ const char* const CHARACTERISTIC_UUID = "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072";
 // --- BAT POWER MONITORING ---
 const int BAT_PIN = 18;
 
-// --- EEPROM CONSTANTS ---
+// --- EEPROM CONSTANTS for storing device name---
 const int MAX_STRING_LENGTH = 16; 
 const int eepromAddress = 0; // memory address
 
-// -- INSTANTIATE GLOBAL FILE NAME AND RTCD --
+// -- INSTANTIATE GLOBAL FILE NAME AND RTC --
 File file;
 char filename[64];
 RTC_DS3231 rtc;
@@ -442,6 +443,7 @@ String readStringFromEEPROM(int address) {
   // Convert the character array back into a readable Arduino String object
   return String(charBuffer);
 }
+
 void writeStringToEEPROM(int address, String data) {
   char charBuffer[MAX_STRING_LENGTH];
   
