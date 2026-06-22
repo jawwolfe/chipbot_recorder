@@ -1,21 +1,19 @@
 #include <TinyGPS++.h>
 
-TinyGPSPlus gps;
-
-#define RXD1 16  // Connect to the TX pin of the GPS!!!! reversed!!
-#define TXD1 15  // Connect to the RX pin of the GPS!!!! reversed!!
-
 // --- GPS GLOBAL DEFAULTS and Variables ---
+const int RXD1 = 16;  // Connect to the TX pin of the GPS!!!! reversed!!
+const int TXD1 = 15;  // Connect to the RX pin of the GPS!!!! reversed!!
 const double DEFAULT_LAT = 0.0;
 const double DEFAULT_LNG = 0.0;
-
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-unsigned long lastDataTime = 0;
-unsigned long lastHourlyUpdate = 0;
-const unsigned long ONE_HOUR_MS = 3600000;      // 60 mins * 60 secs * 1000 ms
-const unsigned long SETUP_TIMEOUT_MS = 15000;   // 15 seconds max wait in setup
+unsigned long wiringLastDataTime = 0;
+unsigned long lastGPSHourlyUpdate = 0;
+const unsigned long GPS_ONE_HOUR_MS = 3600000;      // 60 mins * 60 secs * 1000 ms
+const unsigned long GPS_SETUP_TIMEOUT_MS = 15000;   // 15 seconds max wait in setup
+
+TinyGPSPlus gps;
 
 void setup() {
   Serial.begin(9600);
@@ -26,7 +24,7 @@ void setup() {
 
   unsigned long setupStart = millis();
 
-  while (!hasValidGpsFix && (millis() - setupStart < SETUP_TIMEOUT_MS)) {
+  while (!hasValidGpsFix && (millis() - setupStart < GPS_SETUP_TIMEOUT_MS)) {
     while (Serial1.available() > 0) {
       char c = Serial1.read();
       if (gps.encode(c)) {
@@ -56,8 +54,8 @@ void setup() {
   }
 
   // Synchronize our timers right as setup finishes
-  lastDataTime = millis();
-  lastHourlyUpdate = millis();
+  wiringLastDataTime = millis();
+  lastGPSHourlyUpdate = millis();
 }
 
 void loop() {
@@ -72,19 +70,19 @@ void loop() {
   }
 
   if (dataReceived) {
-    lastDataTime = millis(); // Reset wiring timeout tracker
+    wiringLastDataTime = millis(); // Reset wiring timeout tracker
   }
 
   // --- HOURLY UPDATE LOGIC (Non-blocking) ---
-  if (millis() - lastHourlyUpdate >= ONE_HOUR_MS) {
+  if (millis() - lastGPSHourlyUpdate >= GPS_ONE_HOUR_MS) {
     updateHourlyCoordinates();
-    lastHourlyUpdate = millis(); // Reset the 1-hour timer
+    lastGPSHourlyUpdate = millis(); // Reset the 1-hour timer
   }
 
   // Wiring check: If 5 seconds pass without ANY raw data over the serial line
-  if (millis() - lastDataTime > 5000) {
+  if (millis() - wiringLastDataTime > 5000) {
     Serial.println("Error: No raw GPS data detected. Check your wiring or pins!");
-    lastDataTime = millis(); 
+    wiringLastDataTime = millis(); 
   }
 
 }
