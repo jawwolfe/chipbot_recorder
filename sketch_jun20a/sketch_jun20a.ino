@@ -1,23 +1,17 @@
 #include <TinyGPS++.h>
 
-// Create a TinyGPS++ object
 TinyGPSPlus gps;
 
-// Use safer, unassigned GPIOs for the ESP32-S3
 #define RXD1 16  // Connect to the TX pin of the GPS!!!! reversed!!
 #define TXD1 15  // Connect to the RX pin of the GPS!!!! reversed!!
 
-// --- GLOBAL DEFAULTS ---
-// Set these to whatever fallback coordinates you want 
+// --- GPS GLOBAL DEFAULTS and Variables ---
 const double DEFAULT_LAT = 0.0;
 const double DEFAULT_LNG = 0.0;
 
-// Global variables for your active coordinates
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-
-// Non-blocking timer variables
 unsigned long lastDataTime = 0;
 unsigned long lastHourlyUpdate = 0;
 const unsigned long ONE_HOUR_MS = 3600000;      // 60 mins * 60 secs * 1000 ms
@@ -26,17 +20,12 @@ const unsigned long SETUP_TIMEOUT_MS = 15000;   // 15 seconds max wait in setup
 void setup() {
   Serial.begin(9600);
   
-  // Initialize Serial1 with safe ESP32-S3 pins
+  // Initialize Serial1
   Serial1.begin(9600, SERIAL_8N1, RXD1, TXD1);
-
   Serial.println("ESP32-S3 GPS Test Initialized.");
-  Serial.print("Attempting to get initial GPS fix (Timeout: ");
-  Serial.print(SETUP_TIMEOUT_MS / 1000);
-  Serial.println(" seconds)...");
 
   unsigned long setupStart = millis();
 
-  // --- SETUP UPDATE WITH TIMEOUT ---
   while (!hasValidGpsFix && (millis() - setupStart < SETUP_TIMEOUT_MS)) {
     while (Serial1.available() > 0) {
       char c = Serial1.read();
@@ -51,7 +40,6 @@ void setup() {
           Serial.print(globalLat, 6);
           Serial.print(", ");
           Serial.println(globalLng, 6);
-          Serial.println("--------------------------------\n");
           break; 
         }
       }
@@ -65,11 +53,6 @@ void setup() {
     globalLng = DEFAULT_LNG;
     Serial.println("\n--- Setup GPS Timeout ---");
     Serial.println("Could not get a satellite lock in time.");
-    Serial.print("Using default coordinates: ");
-    Serial.print(globalLat, 6);
-    Serial.print(", ");
-    Serial.println(globalLng, 6);
-    Serial.println("---------------------------\n");
   }
 
   // Synchronize our timers right as setup finishes
@@ -79,7 +62,7 @@ void setup() {
 
 void loop() {
 
-bool dataReceived = false;
+  bool dataReceived = false;
 
   // Keep feeding TinyGPS++ constantly in the background
   while (Serial1.available() > 0) {
@@ -122,5 +105,4 @@ void updateHourlyCoordinates() {
     hasValidGpsFix = false;
     Serial.println("Hourly update failed: No valid GPS fix at this moment.");
   }
-  Serial.println("------------------------------------\n");
 }
