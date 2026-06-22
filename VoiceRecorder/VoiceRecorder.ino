@@ -10,67 +10,15 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <EEPROM.h>
+#include <TinyGPS++.h>
 
-#define I2S_BCK_PIN 4
-#define I2S_WS_PIN 5
-#define I2S_SD_PIN 6
-
-#define SD_CS_PIN 10
-#define SD_MOSI_PIN 11
-#define SD_MISO_PIN 13
-#define SD_CLK_PIN 12 //also know as SCK pin 
-
-#define LED_PIN 3 // blue led for recording or listening
-#define LED_PIN_2 17 // yellow led for SD disc status full or not ready
-#define LED_PIN_3 7 // red led for battery voltage checks
-
-#define I2C_SDA 8
-#define I2C_SCL 9
-#define SAMPLE_RATE 48000  // DVD quality
-#define I2S_NUM I2S_NUM_0
-#define WAVE_HEADER_SIZE 44
-#define MY_CLOCK 4000000
-#define SERVICE_UUID        "fdcff45e-438b-4a62-acf6-dbd852aae4b1"
-#define CHARACTERISTIC_UUID "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072"
-#define BAT_PIN 18
-
-// EEPROM string length
-const int MAX_STRING_LENGTH = 16; 
-// Choose an EEPROM starting address
-const int eepromAddress = 0; 
-
-
-// Define your two daily wake-up windows (in 24-hour format)
-const int START_1_HR = 2;   // Window 1 Start: 08:30
-const int START_1_MIN = 30;
-const int STOP_1_HR = 11;    // Window 1 End: 09:30
-const int STOP_1_MIN = 59;
-
-const int START_2_HR = 12;  // Window 2 Start: 17:00
-const int START_2_MIN = 0;
-const int STOP_2_HR = 23;   // Window 2 End: 18:00
-const int STOP_2_MIN = 15;
-
-// Recording constraints
-const int recordingTimeLimit = 30000; // 30 seconds limit
-const float soundThresholdMultiplier = 1.3; // Starts recording if 1.5x louder than quiet
-const int silenceTimeout = 5000; // Stop if silent for 5 seconds
-const long int_samp_blnk = 1000;
-unsigned long prevMillisBlnk = 0;    
-unsigned long startDiscError = 0;
-const unsigned long intDiscError = 10000;
-int ledState = LOW;  
-const int ledPin = 3;
-
-File file;
-bool isRecording = false;
-unsigned long lastBlinkTime = 0;
-unsigned long recordingStartTime = 0;
-unsigned long lastSoundTime = 0;
-unsigned long baselineNoise = 0;
-char filename[64];
-RTC_DS3231 rtc;
- 
+// --- I2S MIC GLOBAL DEFAULTS and VARIABLES ---
+const int I2S_BCK_PIN = 4;
+const int I2S_WS_PIN = 5;
+const int I2S_SD_PIN = 6;
+const unsigned int SAMPLE_RATE = 48000;  // DVD quality
+constexpr i2s_port_t I2S_NUM = I2S_NUM_0;
+const int WAVE_HEADER_SIZE = 44;
 const i2s_config_t i2s_config = {
   .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
   .sample_rate = SAMPLE_RATE,
@@ -84,7 +32,6 @@ const i2s_config_t i2s_config = {
   .tx_desc_auto_clear = false,
   .fixed_mclk = 0
 };
-
 const i2s_pin_config_t pin_config = {
   .bck_io_num = I2S_BCK_PIN,
   .ws_io_num = I2S_WS_PIN,
@@ -92,58 +39,63 @@ const i2s_pin_config_t pin_config = {
   .data_in_num = I2S_SD_PIN
 };
 
-void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels, int dataSize) {
-  byte header[WAVE_HEADER_SIZE];
-  int fileSize = dataSize + WAVE_HEADER_SIZE - 8;
-  int byteRate = sampleRate * channels * (bitsPerSample / 8);
+// --- Recording constraints ---
+const int recordingTimeLimit = 30000; // 30 seconds limit
+const float soundThresholdMultiplier = 1.3; // Starts recording if 1.5x louder than quiet
+const int silenceTimeout = 5000; // Stop if silent for 5 seconds
+bool isRecording = false;
+unsigned long recordingStartTime = 0;
+unsigned long lastSoundTime = 0;
+unsigned long baselineNoise = 0;
 
-  header[0] = 'R';
-  header[1] = 'I';
-  header[2] = 'F';
-  header[3] = 'F';
-  header[4] = (byte)(fileSize & 0xFF);
-  header[5] = (byte)((fileSize >> 8) & 0xFF);
-  header[6] = (byte)((fileSize >> 16) & 0xFF);
-  header[7] = (byte)((fileSize >> 24) & 0xFF);
-  header[8] = 'W';
-  header[9] = 'A';
-  header[10] = 'V';
-  header[11] = 'E';
-  header[12] = 'f';
-  header[13] = 'm';
-  header[14] = 't';
-  header[15] = ' ';
-  header[16] = 16;
-  header[17] = 0;
-  header[18] = 0;
-  header[19] = 0;  // PCM Chunk Size
-  header[20] = 1;
-  header[21] = 0;  // PCM Format
-  header[22] = channels;
-  header[23] = 0;
-  header[24] = (byte)(sampleRate & 0xFF);
-  header[25] = (byte)((sampleRate >> 8) & 0xFF);
-  header[26] = (byte)((sampleRate >> 16) & 0xFF);
-  header[27] = (byte)((sampleRate >> 24) & 0xFF);
-  header[28] = (byte)(byteRate & 0xFF);
-  header[29] = (byte)((byteRate >> 8) & 0xFF);
-  header[30] = (byte)((byteRate >> 16) & 0xFF);
-  header[31] = (byte)((byteRate >> 24) & 0xFF);
-  header[32] = (byte)(channels * (bitsPerSample / 8));
-  header[33] = 0;  // Block Align
-  header[34] = bitsPerSample;
-  header[35] = 0;  // Bits Per Sample
-  header[36] = 'd';
-  header[37] = 'a';
-  header[38] = 't';
-  header[39] = 'a';
-  header[40] = (byte)(dataSize & 0xFF);
-  header[41] = (byte)((dataSize >> 8) & 0xFF);
-  header[42] = (byte)((dataSize >> 16) & 0xFF);
-  header[43] = (byte)((dataSize >> 24) & 0xFF); 
+// --- RTC MODULE GLOBAL DEFAULTS and VARIABLES ---
+const int RTC_SDA_PIN = 8;
+const int RTC_SCL_PIN = 9;
 
-  file.write(header, WAVE_HEADER_SIZE);
-}
+// --- DAILY WAKEUP WINDOWS (in 24-hour format) --
+const int START_1_HR = 2;   // Window 1
+const int START_1_MIN = 30;
+const int STOP_1_HR = 11;    // Window 1 End
+const int STOP_1_MIN = 59;
+const int START_2_HR = 12;  // Window 2 Start
+const int START_2_MIN = 0;
+const int STOP_2_HR = 23;   // Window 2 End
+const int STOP_2_MIN = 15;
+
+// --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
+const int SD_CS_PIN = 10;
+const int SD_MOSI_PIN = 11;
+const int SD_MISO_PIN = 13;
+const int SD_CLK_PIN = 12; //also know as SCK pin 
+unsigned long startDiscError = 0;
+const unsigned long intDiscError = 10000;
+
+// --- LED PIN DEFINITIONS ---
+const int LED_PIN = 3; // blue led for recording or listening
+const int LED_PIN_2 = 17; // yellow led for SD disc status full or not ready
+const int LED_PIN_3 = 7; // red led for battery voltage checks
+// -- used in disk check --
+int ledState = LOW; 
+const int ledPin = 3;
+// -- used in recording --
+const long int_samp_blnk = 1000;
+unsigned long prevMillisBlnk = 0;   
+
+// --- BLUETOOTH BLE ---
+const char* const SERVICE_UUID        = "fdcff45e-438b-4a62-acf6-dbd852aae4b1";
+const char* const CHARACTERISTIC_UUID = "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072";
+
+// --- BAT POWER MONITORING ---
+const int BAT_PIN = 18;
+
+// --- EEPROM CONSTANTS ---
+const int MAX_STRING_LENGTH = 16; 
+const int eepromAddress = 0; // memory address
+
+// -- INSTANTIATE GLOBAL FILE NAME AND RTCD --
+File file;
+char filename[64];
+RTC_DS3231 rtc;
 
 void setup() {
   Serial.begin(115200);
@@ -153,7 +105,7 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
   digitalWrite(LED_PIN_2, LOW);
 
-  bool i2c_ok = Wire.begin(I2C_SDA, I2C_SCL);
+  bool i2c_ok = Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
   if (!i2c_ok) {
     Serial.println("Error: Failed to initialize I2C bus.");
     while (1);
@@ -500,4 +452,57 @@ void writeStringToEEPROM(int address, String data) {
   EEPROM.put(address, charBuffer);
   // CRITICAL FOR ESP32: Push the RAM buffer changes into actual Flash memory
   EEPROM.commit();
+}
+
+void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels, int dataSize) {
+  byte header[WAVE_HEADER_SIZE];
+  int fileSize = dataSize + WAVE_HEADER_SIZE - 8;
+  int byteRate = sampleRate * channels * (bitsPerSample / 8);
+
+  header[0] = 'R';
+  header[1] = 'I';
+  header[2] = 'F';
+  header[3] = 'F';
+  header[4] = (byte)(fileSize & 0xFF);
+  header[5] = (byte)((fileSize >> 8) & 0xFF);
+  header[6] = (byte)((fileSize >> 16) & 0xFF);
+  header[7] = (byte)((fileSize >> 24) & 0xFF);
+  header[8] = 'W';
+  header[9] = 'A';
+  header[10] = 'V';
+  header[11] = 'E';
+  header[12] = 'f';
+  header[13] = 'm';
+  header[14] = 't';
+  header[15] = ' ';
+  header[16] = 16;
+  header[17] = 0;
+  header[18] = 0;
+  header[19] = 0;  // PCM Chunk Size
+  header[20] = 1;
+  header[21] = 0;  // PCM Format
+  header[22] = channels;
+  header[23] = 0;
+  header[24] = (byte)(sampleRate & 0xFF);
+  header[25] = (byte)((sampleRate >> 8) & 0xFF);
+  header[26] = (byte)((sampleRate >> 16) & 0xFF);
+  header[27] = (byte)((sampleRate >> 24) & 0xFF);
+  header[28] = (byte)(byteRate & 0xFF);
+  header[29] = (byte)((byteRate >> 8) & 0xFF);
+  header[30] = (byte)((byteRate >> 16) & 0xFF);
+  header[31] = (byte)((byteRate >> 24) & 0xFF);
+  header[32] = (byte)(channels * (bitsPerSample / 8));
+  header[33] = 0;  // Block Align
+  header[34] = bitsPerSample;
+  header[35] = 0;  // Bits Per Sample
+  header[36] = 'd';
+  header[37] = 'a';
+  header[38] = 't';
+  header[39] = 'a';
+  header[40] = (byte)(dataSize & 0xFF);
+  header[41] = (byte)((dataSize >> 8) & 0xFF);
+  header[42] = (byte)((dataSize >> 16) & 0xFF);
+  header[43] = (byte)((dataSize >> 24) & 0xFF); 
+
+  file.write(header, WAVE_HEADER_SIZE);
 }
