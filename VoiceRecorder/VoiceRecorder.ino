@@ -53,14 +53,14 @@ const int RTC_SDA_PIN = 8;
 const int RTC_SCL_PIN = 9;
 
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
-const int START_1_HR = 2;   // Window 1
-const int START_1_MIN = 30;
+const int START_1_HR = 1;   // Window 1
+const int START_1_MIN = 1;
 const int STOP_1_HR = 11;    // Window 1 End
 const int STOP_1_MIN = 59;
 const int START_2_HR = 12;  // Window 2 Start
 const int START_2_MIN = 0;
-const int STOP_2_HR = 19;   // Window 2 End
-const int STOP_2_MIN = 15;
+const int STOP_2_HR = 24;   // Window 2 End
+const int STOP_2_MIN = 59;
 
 // --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
 const int SD_CS_PIN = 10;
@@ -82,7 +82,7 @@ bool hasValidGpsFix = false;
 unsigned long GPSWiringLastDataTime = 0;
 unsigned long lastGPSHourlyUpdate = 0;
 const unsigned long GPS_ONE_HOUR_MS = 3600000;      // 60 mins * 60 secs * 1000 ms
-const unsigned long GPS_SETUP_TIMEOUT_MS = 25000;   // 15 seconds max wait in setup
+const unsigned long GPS_SETUP_TIMEOUT_MS = 1200000;   // 15 seconds max wait in setup
 const int MOSFET_GATE_PIN  = 1;
 
 // --- LED PIN DEFINITIONS ---
@@ -90,7 +90,7 @@ const int LED_PIN = 14; // blue led for recording or listening
 const int LED_PIN_2 = 17; // yellow led for SD disc status full or not ready
 const int LED_PIN_3 = 7; // red led for battery voltage checks
 // -- used in startup disk check --
-int ledState = LOW; 
+int ledStateRecording = LOW; 
 // -- used in recording long blink when sampling--
 const long int_samp_blnk = 1000;
 unsigned long prevMillisBlnk = 0;   
@@ -100,7 +100,12 @@ const char* const SERVICE_UUID        = "fdcff45e-438b-4a62-acf6-dbd852aae4b1";
 const char* const CHARACTERISTIC_UUID = "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072";
 
 // --- BAT POWER MONITORING ---
+float batteryLevel;
 const int BAT_PIN = 18;
+const float LOW_BATTERY_THRESHOLD = 82.0f; // Flash below 80%
+const unsigned long FLASH_INTERVAL = 500;  // Flash every 500ms
+unsigned long lastFlashTime = 0;
+bool ledStateBattery = false;
 
 // --- EEPROM CONSTANTS for storing device name---
 const int MAX_STRING_LENGTH = 16; 
@@ -117,6 +122,8 @@ void setup() {
   delay(1000); // Give serial time to initialize
   pinMode(LED_PIN, OUTPUT);
   pinMode(LED_PIN_2, OUTPUT);
+  pinMode(LED_PIN_3, OUTPUT);
+  digitalWrite(LED_PIN_3, LOW);
   digitalWrite(LED_PIN, LOW);
   digitalWrite(LED_PIN_2, LOW);
 
@@ -140,14 +147,12 @@ void setup() {
 
   // Initialize Serial1
   Serial1.begin(9600, SERIAL_8N1, RXD1, TXD1);
-  Serial.println("ESP32-S3 GPS Test Initialized.");
   unsigned long setupStart = millis();
 
   // Get current time from the DS3231 module
   DateTime now = rtc.now();
 
-  float batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
-  Serial.println(batteryLevel);
+  batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
 
   // Convert everything to minutes since midnight for easy comparison
   int currentMinutes = (now.hour() * 60) + now.minute();
@@ -159,11 +164,6 @@ void setup() {
   // Check if we are currently INSIDE either of the two active windows
   bool inWindow1 = (currentMinutes >= start1 && currentMinutes < stop1);
   bool inWindow2 = (currentMinutes >= start2 && currentMinutes < stop2);
-
-  Serial.println(currentMinutes);
-  Serial.println(start2);
-  Serial.println(stop2);
-  Serial.println(inWindow2);
 
   if (!EEPROM.begin(MAX_STRING_LENGTH)) {
     Serial.println("Failed to initialize EEPROM");
@@ -182,7 +182,7 @@ void setup() {
   if (inWindow1 || inWindow2) {
     // We are supposed to be awake! Proceed to void loop()
     digitalWrite(MOSFET_GATE_PIN, LOW);
-
+    Serial.println("Waiting 20 min max for GPS coords.");
     // GET initial GPS coordinates
     while (!hasValidGpsFix && (millis() - setupStart < GPS_SETUP_TIMEOUT_MS)) {
       while (Serial1.available() > 0) {
@@ -192,8 +192,6 @@ void setup() {
             globalLat = gps.location.lat();
             globalLng = gps.location.lng();
             hasValidGpsFix = true;
-            
-            Serial.println("\n--- Setup GPS Fix Acquired! ---");
             Serial.print("Initial Coordinates: ");
             Serial.print(globalLat, 6);
             Serial.print(", ");
@@ -208,11 +206,9 @@ void setup() {
     if (!hasValidGpsFix) {
       globalLat = DEFAULT_LAT;
       globalLng = DEFAULT_LNG;
-      Serial.println("\n--- Setup GPS Timeout ---");
       Serial.println("Could not get a satellite lock in time.");
     }
     digitalWrite(MOSFET_GATE_PIN, HIGH);
-    Serial.println("GPS Powered OFF via MOSFET post-setup.");
 
     // Synchronize our timers right as setup finishes
     GPSWiringLastDataTime = millis();
@@ -270,8 +266,7 @@ void setup() {
         delay(500);
       }
     }
-    Serial.println("SD Card Ready.");
-    i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
+     i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
     i2s_set_pin(I2S_NUM, &pin_config);
     i2s_zero_dma_buffer(I2S_NUM);
     calibrateNoiseFloor();
@@ -308,13 +303,26 @@ void setup() {
 
 void loop() {  
 
-
   // --- HOURLY UPDATE LOGIC (Non-blocking window check) ---
   if (millis() - lastGPSHourlyUpdate >= GPS_ONE_HOUR_MS) {
     updateHourlyCoordinates();
     lastGPSHourlyUpdate = millis(); // Reset the 1-hour timer
   }
 
+  // Check if battery is low
+  if (batteryLevel < LOW_BATTERY_THRESHOLD) {
+    // Non-blocking flash logic
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastFlashTime >= FLASH_INTERVAL) {
+      lastFlashTime = currentMillis;
+      ledStateBattery = !ledStateBattery; // Toggle the LED state
+      digitalWrite(LED_PIN_3, ledStateBattery);
+    }
+  } else {
+    // Force the LED off if battery is safe
+    digitalWrite(LED_PIN_3, LOW);
+    ledStateBattery = false;
+  }
 
   // 1. If NOT recording, we sample the microphone to look for the trigger sound
   if (!isRecording) {
@@ -325,13 +333,13 @@ void loop() {
       // Save the last time you blinked the LED
       prevMillisBlnk = curMillisBlnk;
       // If the LED is off, turn it on, and vice-versa
-      if (ledState == LOW) {
-        ledState = HIGH;
+      if (ledStateRecording == LOW) {
+        ledStateRecording = HIGH; 
       } else {
-        ledState = LOW;
+        ledStateRecording = LOW;
       }
       // Update the physical LED pin with the new state
-      digitalWrite(LED_PIN, ledState);
+      digitalWrite(LED_PIN, ledStateRecording);
     }
 
     float currentVolume = readMicrophoneVolume();
@@ -421,7 +429,6 @@ void updateHourlyCoordinates() {
 
   // Turn OFF GPS immediately after trying to obtain an update
   digitalWrite(MOSFET_GATE_PIN, HIGH);
-  Serial.println("GPS Powered OFF via MOSFET.\n");
 }
 
 void calibrateNoiseFloor() {
