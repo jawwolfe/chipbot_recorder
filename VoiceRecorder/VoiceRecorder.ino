@@ -142,8 +142,9 @@ void setLocalTimezone(float longitude, int year, int month, int day) {
     setenv("TZ", tzString, 1);
     tzset();
     timezoneKnown = true;
+    
     Serial.printf("Timezone configured to: %s\n", tzString);
-
+    logMessage(String("Timezone configured to: ") + tzString);
 }
 
 void syncSystemTimeWithGPS() {
@@ -202,8 +203,10 @@ void printLocalTime() {
         logMessage("Failed to obtain time ");
         return;
     }
+    char timeBuffer[64];
+    strftime(timeBuffer, sizeof(timeBuffer), "%A, %B %d %Y %H:%M:%S", &timeinfo);
     Serial.println(&timeinfo, "Local Time: %A, %B %d %Y %H:%M:%S");
-    //logMessage("Failed to initialize EEPROM");
+    logMessage("Local Time: " + String(timeBuffer));
 }
 
 void logMessage(const String &message) {
@@ -313,9 +316,15 @@ void setup() {
             globalLng = gps.location.lng();
             hasValidGpsFix = true;
             Serial.print("Initial Coordinates: ");
-            Serial.print(globalLat, 6);
+            logMessage("Initial Coordinates: ");
+            String latStr = String(globalLat, 6);
+            String longStr = String(globalLng, 6);
+            Serial.print(latStr);
+            logMessage (latStr);
             Serial.print(", ");
-            Serial.println(globalLng, 6);
+            logMessage(", ");
+            Serial.println(longStr);
+            logMessage(longStr);
 
             struct tm timeinfo;
             if (getLocalTime(&timeinfo) && timezoneKnown) {
@@ -395,6 +404,7 @@ void setup() {
     i2s_zero_dma_buffer(I2S_NUM);
     calibrateNoiseFloor();
     Serial.println("System is Ready. Waiting for sound trigger");
+    logMessage("System is Ready. Waiting for sound trigger");
 
     } else {
       // We are outside the windows. Calculate sleep duration and go to sleep immediately.
@@ -416,8 +426,8 @@ void setup() {
       long secondsToSleep = (minutesToSleep * 60) - now.second();
       if (secondsToSleep <= 0) secondsToSleep = 1; // Prevent negative/zero sleep
 
-      Serial.printf("Outside active windows. Sleeping for %ld seconds...\n", secondsToSleep);
-      //logMessage("Outside active windows. Sleeping for %ld seconds...\n", secondsToSleep);
+      Serial.printf("Outside active windows. Sleeping for %ld seconds...", secondsToSleep);
+      logMessage("Outside active windows. Sleeping for %ld seconds..." + String(secondsToSleep));
       Serial.flush();
 
       // Configure deep sleep timer (expects microseconds)
@@ -547,7 +557,7 @@ void startRecording() {
   Serial.print("Recording has started: ");
   logMessage("Recording has started:  ");
   Serial.println(filename);
-  //logMessage(std::string(filename) + " ");
+  logMessage(String(filename) + " ");
   file = SD.open(filename, FILE_WRITE);
   if (!file) {
     Serial.println("File is not Open!");
