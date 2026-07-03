@@ -40,13 +40,9 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const int recordingTimeLimit = 30000; // 30 seconds limit
-const float soundThresholdMultiplier = 1.3; // Starts recording if 1.5x louder than quiet
-const int silenceTimeout = 5000; // Stop if silent for 5 seconds
+const unsigned long recordingTimeLimit = 600000; // Continuous 10-minute intervals (in milliseconds)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
-unsigned long lastSoundTime = 0;
-unsigned long baselineNoise = 0;
 
 // --- RTC MODULE GLOBAL DEFAULTS and VARIABLES ---
 const int RTC_SDA_PIN = 8;
@@ -120,6 +116,15 @@ File file1;
 char filename[92];
 RTC_DS3231 rtc;
 TinyGPSPlus gps;
+
+// Forward Declarations
+String readStringFromEEPROM(int address);
+void writeStringToEEPROM(int address, String data);
+void logMessage(const String &message);
+void startRecording();
+void stopRecording();
+void appendAudioToSD();
+void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels, int dataSize);
 
 void setLocalTimezone(float longitude, int year, int month, int day) {
     char tzString[32];
@@ -207,7 +212,7 @@ void printLocalTime() {
 void logMessage(const String &message) {
   // Open file in Append mode. If it doesn't exist, it creates it automatically.
   file1 = SD.open(currentFileName, FILE_APPEND);
-    if (file1) {
+  if (file1) {
     file1.println(message);
     // Explicitly closing updates the file allocation table (FAT) size immediately
     file1.close(); 
@@ -292,7 +297,6 @@ void setup() {
             now.year(), now.month(), now.day(), now.hour(), now.minute());
     currentFileName = String(bootLogName);
 
-
     digitalWrite(MOSFET_GATE_PIN, LOW);
     Serial.println("In active window get GPS coordinates wait 20 minutes.");
     logMessage("In active window get GPS coordinates wait 20 minutes.");
@@ -310,7 +314,7 @@ void setup() {
             String latStr = String(globalLat, 6);
             String longStr = String(globalLng, 6);
             Serial.print(latStr);
-            logMessage (latStr);
+            logMessage(latStr);
             Serial.println(longStr);
             logMessage(longStr);
             struct tm timeinfo;
@@ -325,11 +329,10 @@ void setup() {
                  printLocalTime();
             }
             break; 
-
           }
         }
       }
-    delay(1); // Keep the ESP32-S3 watchdog happy
+      delay(1);
     }
     // If the loop finished but we never got a valid fix, use defaults
     if (!hasValidGpsFix) {
@@ -360,7 +363,7 @@ void setup() {
                                         );
     String initCharacteristic = "Coordinates: " + coordinatesString;
     pCharacteristic->setValue(initCharacteristic);
-        pService->start();
+    pService->start();
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setScanResponse(true);
@@ -369,7 +372,7 @@ void setup() {
     // Higher interval = lower power, but takes longer for your Android phone to discover.
     pAdvertising->setMinInterval(0x0640); 
     pAdvertising->setMaxInterval(0x0640);
-      BLEDevice::startAdvertising();
+    BLEDevice::startAdvertising();
     Serial.println("Characteristic defined! Now advertising...");
     logMessage("Characteristic defined! Now advertising...");
     // This allows the ESP32-S3 to automatically enter light sleep 
@@ -378,7 +381,7 @@ void setup() {
     #if CONFIG_PM_ENABLE
       esp_pm_config_esp32s3_t pm_config = {
           .max_freq_mhz = 240,
-          .min_freq_mhz = 40,      // XTAL frequency
+          .min_freq_mhz = 40,
           .light_sleep_enable = true
       };
       esp_pm_configure(&pm_config);
@@ -387,12 +390,11 @@ void setup() {
     i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
     i2s_set_pin(I2S_NUM, &pin_config);
     i2s_zero_dma_buffer(I2S_NUM);
-    calibrateNoiseFloor();
-    Serial.println("System is Ready. Waiting for sound trigger");
-    logMessage("System is Ready. Waiting for sound trigger");
 
-    } else {
-      // We are outside the windows. Calculate sleep duration and go to sleep immediately.
+    Serial.println("System is Ready. Beginning continuous loop recording.");
+    logMessage("System is Ready. Beginning continuous loop recording.");
+
+  } else {
       digitalWrite(MOSFET_GATE_PIN, HIGH);
       int minutesToSleep = 0;
 
@@ -439,47 +441,21 @@ void loop() {
     ledStateBattery = false;
   }
 
-  // 1. If NOT recording, we sample the microphone to look for the trigger sound
+  // --- CONTINUOUS AUDIO TRACK MANAGEMENT ---
   if (!isRecording) {
-    //put the slow blink of blue LED_PIN using millis here
-    unsigned long curMillisBlnk = millis();
-    // Check if the time difference is greater than or equal to the interval
-    if (curMillisBlnk - prevMillisBlnk >= int_samp_blnk) {
-      // Save the last time you blinked the LED
-      prevMillisBlnk = curMillisBlnk;
-      // If the LED is off, turn it on, and vice-versa
-      if (ledStateRecording == LOW) {
-        ledStateRecording = HIGH; 
-      } else {
-        ledStateRecording = LOW;
-      }
-      // Update the physical LED pin with the new state
-      digitalWrite(LED_PIN, ledStateRecording);
-    }
+    startRecording();
+    recordingStartTime = millis();
+  } else {
+    unsigned long elapsed = millis() - recordingStartTime;
 
-    float currentVolume = readMicrophoneVolume();
-    
-    if (currentVolume > (baselineNoise * soundThresholdMultiplier)) {
+    // Has our 10-minute file cap expired? If so, cycle files.
+    if (elapsed >= recordingTimeLimit) {
+      stopRecording();
       startRecording();
       recordingStartTime = millis();
-      lastSoundTime = millis();
-    }
-  } 
-  // 2. If WE ARE recording, we process audio inside appendAudioToSD
-  else {
-    unsigned long elapsed = millis() - recordingStartTime;
-    unsigned long silenceDuration = millis() - lastSoundTime; // Use unsigned long for millis
-
-    // Check time limit OR silence limit
-    if (elapsed >= recordingTimeLimit || silenceDuration >= silenceTimeout) {
-      stopRecording();
     } else {
-      // appendAudioToSD now returns true if it detected sound, false if quiet
-      bool soundDetected = appendAudioToSD();
-      
-      if (soundDetected) {
-        lastSoundTime = millis(); // Reset silence timer
-      }
+      // Keep pushing I2S audio frames down to the SD card
+      appendAudioToSD();
     }
   }
 
@@ -494,41 +470,17 @@ void loop() {
   bool inWindow1 = (currentMinutes >= start1 && currentMinutes < stop1);
   bool inWindow2 = (currentMinutes >= start2 && currentMinutes < stop2);
 
-  // If we drop out of BOTH windows, force a restart so setup() can handle the deep sleep math
+  // If we drop out of BOTH windows, wrap up the current recording block and sleep
   if (!inWindow1 && !inWindow2) {
     Serial.println("Active window expired! Going to sleep.");
     logMessage("Active window expired! Going to sleep. ");
+    if (isRecording) {
+      stopRecording();
+    }
     digitalWrite(MOSFET_GATE_PIN, HIGH);
     Serial.flush();
     esp_restart(); 
   }
-}
-
-void calibrateNoiseFloor() {
-  float sum = 0;
-  for (int i = 0; i < 100; i++) {
-    sum += readMicrophoneVolume();
-    delay(10);
-  }
-  baselineNoise = sum / 100.0;
-}
-
-// Helper to calculate RMS from raw PCM data (Used only when idling)
-float readMicrophoneVolume() {
-  int32_t raw_samples[512];
-  size_t bytes_read;
-  i2s_read(I2S_NUM_0, (void**)raw_samples, sizeof(raw_samples), &bytes_read, portMAX_DELAY);
-  
-  float sum_squares = 0;
-  int samples_count = bytes_read / sizeof(int32_t);
-  if (samples_count == 0) return 0;
-
-  for (int i = 0; i < samples_count; i++) {
-    int16_t sample16 = (int16_t)(raw_samples[i] >> 14); 
-    float sample = (float)sample16;
-    sum_squares += sample * sample;
-  }
-  return sqrt(sum_squares / samples_count);
 }
 
 void startRecording() { 
@@ -560,12 +512,13 @@ void startRecording() {
     }
     return;
   }
-   writeWavHeader(file, SAMPLE_RATE, 16, 1, 0);
+  writeWavHeader(file, SAMPLE_RATE, 16, 1, 0);
   isRecording = true;
   digitalWrite(LED_PIN, HIGH); // Turn LED on when starting
 }
 
 void stopRecording() {
+  if (!isRecording) return;
   isRecording = false;
   unsigned long fileSize = file.size() - WAVE_HEADER_SIZE;
   file.seek(0);
@@ -576,8 +529,7 @@ void stopRecording() {
   digitalWrite(LED_PIN, LOW); // Turn LED off when done
 }
 
-// Fixed function: Writes to SD AND checks volume at the same time
-bool appendAudioToSD() {
+void appendAudioToSD() {
     size_t bytesRead;
     int32_t i2sBuffer[256]; 
  
@@ -585,24 +537,17 @@ bool appendAudioToSD() {
 
     int16_t samples16[256];
     int samplesCount = bytesRead / 4;
-    if (samplesCount == 0) return false;
-
-    float sum_squares = 0;
+    if (samplesCount == 0) return;
 
     for (int i = 0; i < samplesCount; i++) {
       // Downsample 32-bit to 16-bit
       samples16[i] = (int16_t)(i2sBuffer[i] >> 14);
-      
-      // Calculate volume on the fly
-      float sample = (float)samples16[i];
-      sum_squares += sample * sample;
     }
 
     // Write data to SD Card
     size_t bytesWritten = file.write((uint8_t *)samples16, samplesCount * 2);
 
-    // If bytes written don't match buffer size, the card is likely full
-    if (bytesWritten < 512) {
+    if (bytesWritten < (size_t)(samplesCount * 2)) {
       Serial.println("CRITICAL ERROR: Write failed!");
       logMessage("CRITICAL ERROR: Write failed! ");
       uint64_t totalBytes = SD.totalBytes();
@@ -633,10 +578,6 @@ bool appendAudioToSD() {
           } 
       }
     }
-    // Calculate current RMS volume of this chunk
-    float currentVolume = sqrt(sum_squares / samplesCount);
-    // Return true if volume is above the threshold
-    return (currentVolume > (baselineNoise * soundThresholdMultiplier));
 }
 
 // Function to get a String out of EEPROM safely
@@ -667,30 +608,16 @@ void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels,
   int fileSize = dataSize + WAVE_HEADER_SIZE - 8;
   int byteRate = sampleRate * channels * (bitsPerSample / 8);
 
-  header[0] = 'R';
-  header[1] = 'I';
-  header[2] = 'F';
-  header[3] = 'F';
+  header[0] = 'R'; header[1] = 'I'; header[2] = 'F'; header[3] = 'F';
   header[4] = (byte)(fileSize & 0xFF);
   header[5] = (byte)((fileSize >> 8) & 0xFF);
   header[6] = (byte)((fileSize >> 16) & 0xFF);
   header[7] = (byte)((fileSize >> 24) & 0xFF);
-  header[8] = 'W';
-  header[9] = 'A';
-  header[10] = 'V';
-  header[11] = 'E';
-  header[12] = 'f';
-  header[13] = 'm';
-  header[14] = 't';
-  header[15] = ' ';
-  header[16] = 16;
-  header[17] = 0;
-  header[18] = 0;
-  header[19] = 0;  // PCM Chunk Size
-  header[20] = 1;
-  header[21] = 0;  // PCM Format
-  header[22] = channels;
-  header[23] = 0;
+  header[8] = 'W'; header[9] = 'A'; header[10] = 'V'; header[11] = 'E';
+  header[12] = 'f'; header[13] = 'm'; header[14] = 't'; header[15] = ' ';
+  header[16] = 16; header[17] = 0; header[18] = 0; header[19] = 0;  
+  header[20] = 1; header[21] = 0;  
+  header[22] = channels; header[23] = 0;
   header[24] = (byte)(sampleRate & 0xFF);
   header[25] = (byte)((sampleRate >> 8) & 0xFF);
   header[26] = (byte)((sampleRate >> 16) & 0xFF);
@@ -700,13 +627,9 @@ void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels,
   header[30] = (byte)((byteRate >> 16) & 0xFF);
   header[31] = (byte)((byteRate >> 24) & 0xFF);
   header[32] = (byte)(channels * (bitsPerSample / 8));
-  header[33] = 0;  // Block Align
-  header[34] = bitsPerSample;
-  header[35] = 0;  // Bits Per Sample
-  header[36] = 'd';
-  header[37] = 'a';
-  header[38] = 't';
-  header[39] = 'a';
+  header[33] = 0;  
+  header[34] = bitsPerSample; header[35] = 0;  
+  header[36] = 'd'; header[37] = 'a'; header[38] = 't'; header[39] = 'a';
   header[40] = (byte)(dataSize & 0xFF);
   header[41] = (byte)((dataSize >> 8) & 0xFF);
   header[42] = (byte)((dataSize >> 16) & 0xFF);
