@@ -57,8 +57,8 @@ const int START_1_HR = 20;   // Window 1
 const int START_1_MIN = 55;
 const int STOP_1_HR = 21;    // Window 1 End
 const int STOP_1_MIN = 5;
-const int START_2_HR = 20;  // Window 2 Start
-const int START_2_MIN = 40;
+const int START_2_HR = 16;  // Window 2 Start
+const int START_2_MIN = 0;
 const int STOP_2_HR = 20;   // Window 2 End
 const int STOP_2_MIN = 50;
 
@@ -258,9 +258,6 @@ void setup() {
   Serial1.begin(9600, SERIAL_8N1, RXD1, TXD1);
   unsigned long setupStart = millis();
 
-  
-  batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
-
   // Convert everything to minutes since midnight for easy comparison
   int currentMinutes = (now.hour() * 60) + now.minute();
   int start1 = (START_1_HR * 60) + START_1_MIN;
@@ -400,7 +397,7 @@ void setup() {
       int minutesToSleep = 0;
 
       if (currentMinutes < start1) {
-        // It's early morning, sleep until Window 1
+        // sleep until Window 1
         minutesToSleep = start1 - currentMinutes;
       } else if (currentMinutes < start2) {
         // We are between Window 1 and Window 2, sleep until Window 2
@@ -427,6 +424,7 @@ void setup() {
 void loop() {  
 
   // Check if battery is low
+  batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
   if (batteryLevel < LOW_BATTERY_THRESHOLD) {
     // Non-blocking flash logic
     unsigned long currentMillis = millis();
