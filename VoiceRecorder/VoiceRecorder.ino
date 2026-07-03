@@ -53,14 +53,14 @@ const int RTC_SDA_PIN = 8;
 const int RTC_SCL_PIN = 9;
 
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
-const int START_1_HR = 1;   // Window 1
-const int START_1_MIN = 1;
-const int STOP_1_HR = 11;    // Window 1 End
-const int STOP_1_MIN = 59;
-const int START_2_HR = 12;  // Window 2 Start
-const int START_2_MIN = 0;
-const int STOP_2_HR = 24;   // Window 2 End
-const int STOP_2_MIN = 59;
+const int START_1_HR = 20;   // Window 1
+const int START_1_MIN = 55;
+const int STOP_1_HR = 21;    // Window 1 End
+const int STOP_1_MIN = 5;
+const int START_2_HR = 20;  // Window 2 Start
+const int START_2_MIN = 40;
+const int STOP_2_HR = 20;   // Window 2 End
+const int STOP_2_MIN = 50;
 
 // --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
 const int SD_CS_PIN = 10;
@@ -112,8 +112,6 @@ const int MAX_STRING_LENGTH = 16;
 const int eepromAddress = 0; // memory address
 
 // --- FILE LOGGING ---
-unsigned long lastRotationTime = 0;
-const unsigned long ONE_HOUR_MS = 3600000; // 1 hour in milliseconds
 String currentFileName; // Determined dynamically on boot/rotation
 
 // -- INSTANTIATE GLOBAL FILE NAME AND RTC --
@@ -125,7 +123,6 @@ TinyGPSPlus gps;
 
 void setLocalTimezone(float longitude, int year, int month, int day) {
     char tzString[32];
-    
     if (longitude > 0) {
         // Philippines: UTC+8. 
         // Note: POSIX TZ format is inverted for positive offsets! UTC+8 is written as -8.
@@ -138,11 +135,9 @@ void setLocalTimezone(float longitude, int year, int month, int day) {
         strcpy(tzString, "EST5EDT,M3.2.0,M11.1.0");
         savedTimezoneOffsetHours = -4; // Base offset
     }
-    
     setenv("TZ", tzString, 1);
     tzset();
     timezoneKnown = true;
-    
     Serial.printf("Timezone configured to: %s\n", tzString);
     logMessage(String("Timezone configured to: ") + tzString);
 }
@@ -220,7 +215,7 @@ void logMessage(const String &message) {
     Serial.println("CRITICAL: Failed to open file for appending debug data!");
   }
 }
-  
+
 void setup() {
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
@@ -238,11 +233,6 @@ void setup() {
     Serial.println("Error: Could not find DS3231 module. Check your wiring!");
     while (1);
   }
-  if (rtc.lostPower()) {
-    Serial.println("RTC lost power, letting's set the time!");
-    // This sets the RTC to the date & time this sketch was compiled
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
   SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   if (!SD.begin(SD_CS_PIN)) {
     Serial.println("SD Card not Initialize!");
@@ -256,12 +246,6 @@ void setup() {
 
   // Get current time from the DS3231 module
   DateTime now = rtc.now();
-  // Log file work establish filename format with minutes from RTC for initial boot
-  char bootLogName[40];
-  snprintf(bootLogName, sizeof(bootLogName), "/debug_%04d%02d%02d_%02d%02d.txt", 
-           now.year(), now.month(), now.day(), now.hour(), now.minute());
-  currentFileName = String(bootLogName);
-  lastRotationTime = millis();
 
   // -- Initialize I2C  mic
   bool i2c_ok = Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
@@ -273,6 +257,8 @@ void setup() {
   // Initialize Serial1
   Serial1.begin(9600, SERIAL_8N1, RXD1, TXD1);
   unsigned long setupStart = millis();
+
+  
   batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
 
   // Convert everything to minutes since midnight for easy comparison
@@ -303,9 +289,16 @@ void setup() {
 
   if (inWindow1 || inWindow2) {
     // We are supposed to be awake! Proceed to void loop()
+    // Log file work establish filename format with minutes from RTC for initial boot
+    char bootLogName[40];
+    snprintf(bootLogName, sizeof(bootLogName), "/debug_%04d%02d%02d_%02d%02d.txt", 
+            now.year(), now.month(), now.day(), now.hour(), now.minute());
+    currentFileName = String(bootLogName);
+
+
     digitalWrite(MOSFET_GATE_PIN, LOW);
-    Serial.println("Waiting 20 min max for GPS coords.");
-    logMessage("Waiting 20 min max for GPS coords. ");
+    Serial.println("In active window get GPS coordinates wait 20 minutes.");
+    logMessage("In active window get GPS coordinates wait 20 minutes.");
     // GET initial GPS coordinates
     while (!hasValidGpsFix && (millis() - setupStart < GPS_SETUP_TIMEOUT_MS)) {
       while (Serial1.available() > 0) {
@@ -321,24 +314,18 @@ void setup() {
             String longStr = String(globalLng, 6);
             Serial.print(latStr);
             logMessage (latStr);
-            Serial.print(", ");
-            logMessage(", ");
             Serial.println(longStr);
             logMessage(longStr);
-
             struct tm timeinfo;
             if (getLocalTime(&timeinfo) && timezoneKnown) {
                 printLocalTime();
             } else {
-                Serial.println("Cold boot or invalid time. Waiting for GPS fix...");
-                logMessage("Cold boot or invalid time. Waiting for GPS fix... ");
                 // 1. Read from your GY-NEO6MV2 module here until gps.location.isValid() and gps.time.isValid() are true
                 // 2. Once valid:
                  float lon = gps.location.lng();
                  setLocalTimezone(lon, gps.date.year(), gps.date.month(), gps.date.day());
                  syncSystemTimeWithGPS();
                  printLocalTime();
-
             }
             break; 
 
@@ -387,6 +374,7 @@ void setup() {
     pAdvertising->setMaxInterval(0x0640);
       BLEDevice::startAdvertising();
     Serial.println("Characteristic defined! Now advertising...");
+    logMessage("Characteristic defined! Now advertising...");
     // This allows the ESP32-S3 to automatically enter light sleep 
     // between BLE advertising intervals.
     esp_sleep_enable_timer_wakeup(1000000); // Optional: dynamic fallback
@@ -727,20 +715,4 @@ void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels,
   header[43] = (byte)((dataSize >> 24) & 0xFF); 
 
   file.write(header, WAVE_HEADER_SIZE);
-}
-
-void checkLogRotation() {
-  if (millis() - lastRotationTime >= ONE_HOUR_MS) {
-    lastRotationTime = millis();
-
-    DateTime now = rtc.now();
-    char rotationBuffer[40];
-    snprintf(rotationBuffer, sizeof(rotationBuffer), "/debug_%04d%02d%02d_%02d%02d.txt", 
-             now.year(), now.month(), now.day(), now.hour(), now.minute());
-    
-    Serial.print("--- One hour elapsed. Rotating logs to: ");
-    logMessage("--- One hour elapsed. Rotating logs to:  ");
-    Serial.print(currentFileName);
-    logMessage(currentFileName);
-  }
 }
