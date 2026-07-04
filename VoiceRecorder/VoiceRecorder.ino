@@ -40,7 +40,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 600000; // Continuous 10-minute intervals (in milliseconds)
+const unsigned long recordingTimeLimit = 120000; // Continuous 10-minute intervals (in milliseconds)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -49,13 +49,13 @@ const int RTC_SDA_PIN = 8;
 const int RTC_SCL_PIN = 9;
 
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
-const int START_1_HR = 20;   // Window 1
-const int START_1_MIN = 55;
-const int STOP_1_HR = 21;    // Window 1 End
-const int STOP_1_MIN = 5;
-const int START_2_HR = 16;  // Window 2 Start
+const int START_1_HR = 19;   // Window 1
+const int START_1_MIN = 0;
+const int STOP_1_HR = 19;    // Window 1 End
+const int STOP_1_MIN = 15;
+const int START_2_HR = 20;  // Window 2 Start
 const int START_2_MIN = 0;
-const int STOP_2_HR = 20;   // Window 2 End
+const int STOP_2_HR = 21;   // Window 2 End
 const int STOP_2_MIN = 50;
 
 // --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
