@@ -49,13 +49,13 @@ const int RTC_SDA_PIN = 8;
 const int RTC_SCL_PIN = 9;
 
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
-const int START_1_HR = 19;   // Window 1
-const int START_1_MIN = 0;
-const int STOP_1_HR = 19;    // Window 1 End
-const int STOP_1_MIN = 15;
-const int START_2_HR = 20;  // Window 2 Start
+const int START_1_HR = 5;   // Window 1
+const int START_1_MIN = 30;
+const int STOP_1_HR = 9;    // Window 1 End
+const int STOP_1_MIN = 30;
+const int START_2_HR = 16;  // Window 2 Start
 const int START_2_MIN = 0;
-const int STOP_2_HR = 21;   // Window 2 End
+const int STOP_2_HR = 22;   // Window 2 End
 const int STOP_2_MIN = 50;
 
 // --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
@@ -63,7 +63,7 @@ const int SD_CS_PIN = 10;
 const int SD_MOSI_PIN = 11;
 const int SD_MISO_PIN = 13;
 const int SD_CLK_PIN = 12; //also know as SCK pin 
-// -- for blinking yellow light for disk error when recording --
+// -- for blinking yellow light for disc error when recording --
 unsigned long startDiscError = 0;
 const unsigned long intDiscError = 10000;
 
@@ -82,14 +82,18 @@ RTC_DATA_ATTR int savedTimezoneOffsetHours = 0;
 RTC_DATA_ATTR bool timezoneKnown = false;
 
 // --- LED PIN DEFINITIONS ---
-const int LED_PIN = 14; // blue led for recording or listening
-const int LED_PIN_2 = 17; // yellow led for SD disc status full or not ready
-const int LED_PIN_3 = 7; // red led for battery voltage checks
-// -- used in startup disk check --
+const int LED_REC = 14; // blue led for recording or listening
+const int LED_DISC = 17; // yellow led for SD disc status full or not ready
+const int LED_BAT = 7; // red led for battery voltage checks
+// -- used in startup disc check --
 int ledStateRecording = LOW; 
 // -- used in recording long blink when sampling--
 const long int_samp_blnk = 1000;
 unsigned long prevMillisBlnk = 0;   
+unsigned long lastRecBlinkTime = 0;
+unsigned long lastGPSBlinkTime = 0;
+bool gpsLedState = false;
+bool ledStateRec = false;
 
 // --- BLUETOOTH BLE ---
 const char* const SERVICE_UUID        = "fdcff45e-438b-4a62-acf6-dbd852aae4b1";
@@ -224,12 +228,12 @@ void logMessage(const String &message) {
 void setup() {
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
-  pinMode(LED_PIN, OUTPUT);
-  pinMode(LED_PIN_2, OUTPUT);
-  pinMode(LED_PIN_3, OUTPUT);
-  digitalWrite(LED_PIN_3, LOW);
-  digitalWrite(LED_PIN, LOW);
-  digitalWrite(LED_PIN_2, LOW);
+  pinMode(LED_REC, OUTPUT);
+  pinMode(LED_DISC, OUTPUT);
+  pinMode(LED_BAT, OUTPUT);
+  digitalWrite(LED_BAT, LOW);
+  digitalWrite(LED_REC, LOW);
+  digitalWrite(LED_DISC, LOW);
   pinMode(MOSFET_GATE_PIN, OUTPUT);
   digitalWrite(MOSFET_GATE_PIN, LOW);
 
@@ -242,9 +246,9 @@ void setup() {
   if (!SD.begin(SD_CS_PIN)) {
     Serial.println("SD Card not Initialize!");
     while (1) {
-      digitalWrite(LED_PIN_2, HIGH);
+      digitalWrite(LED_DISC, HIGH);
       delay(500);
-      digitalWrite(LED_PIN_2, LOW);
+      digitalWrite(LED_DISC, LOW);
       delay(500);
     }
   }
@@ -298,10 +302,16 @@ void setup() {
     currentFileName = String(bootLogName);
 
     digitalWrite(MOSFET_GATE_PIN, LOW);
-    Serial.println("In active window get GPS coordinates wait 20 minutes.");
-    logMessage("In active window get GPS coordinates wait 20 minutes.");
+    Serial.println("In active window get GPS coordinates wait max 20 minutes.");
+    logMessage("In active window get GPS coordinates wait max 20 minutes.");
     // GET initial GPS coordinates
     while (!hasValidGpsFix && (millis() - setupStart < GPS_SETUP_TIMEOUT_MS)) {
+      unsigned long currentMillis = millis();
+      if (currentMillis - lastGPSBlinkTime >= 300) {
+        lastGPSBlinkTime = currentMillis;
+        gpsLedState = !gpsLedState;
+        digitalWrite(LED_REC, gpsLedState);
+      }
       while (Serial1.available() > 0) {
         char c = Serial1.read();
         if (gps.encode(c)) {
@@ -433,11 +443,11 @@ void loop() {
     if (currentMillis - lastFlashTime >= FLASH_INTERVAL) {
       lastFlashTime = currentMillis;
       ledStateBattery = !ledStateBattery; // Toggle the LED state
-      digitalWrite(LED_PIN_3, ledStateBattery);
+      digitalWrite(LED_BAT, ledStateBattery);
     }
   } else {
     // Force the LED off if battery is safe
-    digitalWrite(LED_PIN_3, LOW);
+    digitalWrite(LED_BAT, LOW);
     ledStateBattery = false;
   }
 
@@ -457,6 +467,19 @@ void loop() {
       // Keep pushing I2S audio frames down to the SD card
       appendAudioToSD();
     }
+  }
+
+  if (isRecording) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastRecBlinkTime >= 1200) {
+      lastRecBlinkTime = currentMillis;
+      ledStateRec = !ledStateRec; // Toggle the LED state
+      digitalWrite(LED_REC, ledStateRec);
+    }
+  } else {
+    // Ensure the LED is completely off when not recording
+    digitalWrite(LED_REC, LOW);
+    ledStateRec = false;
   }
 
   // Dynamically check if our active window has just expired
@@ -501,20 +524,22 @@ void startRecording() {
     Serial.println("File is not Open!");
     logMessage("File is not Open! ");
     //Turn off blue 3 led
-    digitalWrite(LED_PIN, LOW);
+    digitalWrite(LED_REC, LOW);
     //Fast blink the 17 yellow for 10 seconds then return to lisitening
     startDiscError = millis();
     while (millis() - startDiscError <= intDiscError) {
-        digitalWrite(LED_PIN_2, HIGH);
+        digitalWrite(LED_DISC, HIGH);
         delay(500);
-        digitalWrite(LED_PIN_2, LOW);
+        digitalWrite(LED_DISC, LOW);
         delay(500);
     }
     return;
   }
   writeWavHeader(file, SAMPLE_RATE, 16, 1, 0);
   isRecording = true;
-  digitalWrite(LED_PIN, HIGH); // Turn LED on when starting
+  lastRecBlinkTime = millis();
+  ledStateRec = true;
+  digitalWrite(LED_REC, ledStateRec);
 }
 
 void stopRecording() {
@@ -526,7 +551,7 @@ void stopRecording() {
   file.close();
   Serial.println("Recording is Complete!");
   logMessage("Recording is Complete! ");
-  digitalWrite(LED_PIN, LOW); // Turn LED off when done
+  digitalWrite(LED_REC, LOW); // Turn LED off when done
 }
 
 void appendAudioToSD() {
@@ -562,19 +587,19 @@ void appendAudioToSD() {
           Serial.println("Error Cause: Insufficient storage space on SD card.");
           logMessage("Error Cause: Insufficient storage space on SD card. ");
           // Halt execution or trigger a system alert/LED here
-          digitalWrite(LED_PIN, LOW); 
+          digitalWrite(LED_REC, LOW); 
           while (true) { 
-            digitalWrite(LED_PIN_2, HIGH);
+            digitalWrite(LED_DISC, HIGH);
             delay(1250); 
-            digitalWrite(LED_PIN_2, LOW);
+            digitalWrite(LED_DISC, LOW);
           } 
       } else {
           Serial.println("Error Cause: Hardware disconnect or file corruption.");
           logMessage("Error Cause: Hardware disconnect or file corruption. ");
           while (true) { 
-            digitalWrite(LED_PIN_2, HIGH);
+            digitalWrite(LED_DISC, HIGH);
             delay(1250); 
-            digitalWrite(LED_PIN_2, LOW);
+            digitalWrite(LED_DISC, LOW);
           } 
       }
     }
