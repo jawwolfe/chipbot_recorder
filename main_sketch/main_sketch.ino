@@ -51,9 +51,10 @@ const int RTC_SCL_PIN = 9;
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
 const int START_1_HR = 5;   // Window 1
 const int START_1_MIN = 30;
+
 const int STOP_1_HR = 9;    // Window 1 End
 const int STOP_1_MIN = 30;
-const int START_2_HR = 16;  // Window 2 Start
+const int START_2_HR = 12;  // Window 2 Start
 const int START_2_MIN = 0;
 const int STOP_2_HR = 22;   // Window 2 End
 const int STOP_2_MIN = 50;
@@ -71,11 +72,11 @@ const unsigned long intDiscError = 10000;
 const int RXD1 = 16;  // Connect to the TX pin of the GPS!!!! reversed!!
 const int TXD1 = 15;  // Connect to the RX pin of the GPS!!!! reversed!!
 const double DEFAULT_LAT = 0.0;
-const double DEFAULT_LNG = 0.0;
+const double DEFAULT_LNG =  0.0;
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-const unsigned long GPS_SETUP_TIMEOUT_MS = 1200000;   // 15 seconds max wait in setup
+const unsigned long GPS_SETUP_TIMEOUT_MS = 1200000;   // 20 minutes max wait in setup (1.2 mil)
 const int MOSFET_GATE_PIN  = 1;
 //TIMEZONE
 RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
@@ -253,16 +254,13 @@ void setup() {
     }
   }
 
+  //needed in certain circumstances to set the RTC clock with PC time
+  //Serial.println("Setting RTC time to PC compile time...");
+  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+
   // Get current time from the DS3231 module
   DateTime now = rtc.now();
 
-  // -- Initialize I2C  mic
-  bool i2c_ok = Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
-  if (!i2c_ok) {
-    Serial.println("Error: Failed to initialize I2C bus.");
-    logMessage("Error: Failed to initialize I2C bus. ");
-    while (1);
-  }
   // Initialize Serial1
   Serial1.begin(9600, SERIAL_8N1, RXD1, TXD1);
   unsigned long setupStart = millis();
@@ -286,7 +284,7 @@ void setup() {
 
   //one time code to enter the unit id into the EEPROM as a config
   //char charBuffer[MAX_STRING_LENGTH];
-  //String myString = "aw_chipbot_01";  
+  //String myString = "aw_chipbot_02";  
   //writeStringToEEPROM(eepromAddress, myString);
   //Serial.println("String saved successfully.");
   //String retrievedString = readStringFromEEPROM(eepromAddress);
@@ -439,6 +437,7 @@ void loop() {
   batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
   if (batteryLevel < LOW_BATTERY_THRESHOLD) {
     // Non-blocking flash logic
+    
     unsigned long currentMillis = millis();
     if (currentMillis - lastFlashTime >= FLASH_INTERVAL) {
       lastFlashTime = currentMillis;
