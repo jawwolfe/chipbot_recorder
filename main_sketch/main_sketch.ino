@@ -40,7 +40,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 120000; // Continuous 10-minute intervals (in milliseconds)
+const unsigned long recordingTimeLimit = 120000; // Continuous 10-minute intervals (600K ms)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -51,7 +51,6 @@ const int RTC_SCL_PIN = 9;
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
 const int START_1_HR = 5;   // Window 1
 const int START_1_MIN = 30;
-
 const int STOP_1_HR = 9;    // Window 1 End
 const int STOP_1_MIN = 30;
 const int START_2_HR = 12;  // Window 2 Start
@@ -76,7 +75,7 @@ const double DEFAULT_LNG =  0.0;
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-const unsigned long GPS_SETUP_TIMEOUT_MS = 1200000;   // 20 minutes max wait in setup (1.2 mil)
+const unsigned long GPS_SETUP_TIMEOUT_MS = 900000;   // 15 minutes max wait in setup (900K ms)
 const int MOSFET_GATE_PIN  = 1;
 //TIMEZONE
 RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
@@ -255,6 +254,7 @@ void setup() {
   }
 
   //needed in certain circumstances to set the RTC clock with PC time
+  //First use of RTC so the active period can be calculated before GPS
   //Serial.println("Setting RTC time to PC compile time...");
   //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
