@@ -40,7 +40,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 120000; // Continuous 10-minute intervals (600K ms)
+const unsigned long recordingTimeLimit = 300000; // Continuous 10-minute intervals (600K ms)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -49,14 +49,14 @@ const int RTC_SDA_PIN = 8;
 const int RTC_SCL_PIN = 9;
 
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
-const int START_1_HR = 5;   // Window 1
-const int START_1_MIN = 30;
-const int STOP_1_HR = 9;    // Window 1 End
-const int STOP_1_MIN = 30;
-const int START_2_HR = 12;  // Window 2 Start
-const int START_2_MIN = 0;
-const int STOP_2_HR = 22;   // Window 2 End
-const int STOP_2_MIN = 50;
+const int START_1_HR = 6;   // Window 1
+const int START_1_MIN = 0;
+const int STOP_1_HR = 7;    // Window 1 End
+const int STOP_1_MIN = 0;
+const int START_2_HR = 20;  // Window 2 Start
+const int START_2_MIN = 15;
+const int STOP_2_HR = 21;   // Window 2 End
+const int STOP_2_MIN = 15;
 
 // --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
 const int SD_CS_PIN = 10;
@@ -109,7 +109,8 @@ bool ledStateBattery = false;
 
 // --- EEPROM CONSTANTS for storing device name---
 const int MAX_STRING_LENGTH = 16; 
-const int eepromAddress = 0; // memory address
+const int eepromAddress = 0;
+const char* DEFAULT_DEVICE_NAME = "name_tbd_aww"; 
 
 // --- FILE LOGGING ---
 String currentFileName; // Determined dynamically on boot/rotation
@@ -607,20 +608,19 @@ void appendAudioToSD() {
 // Function to get a String out of EEPROM safely
 String readStringFromEEPROM(int address) {
   char charBuffer[MAX_STRING_LENGTH];
-  
   // EEPROM.get reads the exact number of bytes needed to fill the char array
   EEPROM.get(address, charBuffer);
-  
+  if ((uint8_t)charBuffer[0] == 0xFF || charBuffer[0] == '\0') {
+    return String(DEFAULT_DEVICE_NAME);
+  }
   // Convert the character array back into a readable Arduino String object
   return String(charBuffer);
 }
 
 void writeStringToEEPROM(int address, String data) {
   char charBuffer[MAX_STRING_LENGTH];
-  
   // Ensure the string fits inside our fixed buffer, leaving room for the null terminator '\0'
   data.toCharArray(charBuffer, MAX_STRING_LENGTH);
-  
   // EEPROM.put automatically loops through the char array bytes and updates them
   EEPROM.put(address, charBuffer);
   // CRITICAL FOR ESP32: Push the RAM buffer changes into actual Flash memory
