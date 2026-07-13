@@ -256,8 +256,10 @@ void setup() {
 
   //needed in certain circumstances to set the RTC clock with PC time
   //First use of RTC so the active period can be calculated before GPS
-  //Serial.println("Setting RTC time to PC compile time...");
-  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+if (rtc.lostPower() || rtc.now().year() < 2020) {
+    Serial.println("RTC lost power or is uninitialized! Setting fallback to compile time...");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
 
   // Get current time from the DS3231 module
   DateTime now = rtc.now();
@@ -421,7 +423,9 @@ void setup() {
       // Safeguard seconds adjustment: subtract current seconds so we wake up exactly on the minute mark
       long secondsToSleep = (minutesToSleep * 60) - now.second();
       if (secondsToSleep <= 0) secondsToSleep = 1; // Prevent negative/zero sleep
-
+      String timestamp = now.timestamp();
+      Serial.println(timestamp);
+      logMessage(timestamp);
       Serial.printf("Outside active windows. Sleeping for %ld seconds...", secondsToSleep);
       logMessage("Outside active windows. Sleeping for %ld seconds..." + String(secondsToSleep));
       Serial.flush();
