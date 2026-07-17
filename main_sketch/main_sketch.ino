@@ -51,8 +51,8 @@ const int RTC_SCL_PIN = 9;
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
 const int START_1_HR = 6;   // Window 1
 const int START_1_MIN = 0;
-const int STOP_1_HR = 7;    // Window 1 End
-const int STOP_1_MIN = 0;
+const int STOP_1_HR = 14;    // Window 1 End
+const int STOP_1_MIN = 22;
 const int START_2_HR = 20;  // Window 2 Start
 const int START_2_MIN = 15;
 const int STOP_2_HR = 21;   // Window 2 End
@@ -301,6 +301,12 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
     snprintf(bootLogName, sizeof(bootLogName), "/debug_%04d%02d%02d_%02d%02d.txt", 
             now.year(), now.month(), now.day(), now.hour(), now.minute());
     currentFileName = String(bootLogName);
+    
+    batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
+    logMessage("Battery Level...");
+    logMessage(String(batteryLevel));
+    Serial.println("Battery Level...");
+    Serial.println(String(batteryLevel));
 
     digitalWrite(MOSFET_GATE_PIN, LOW);
     Serial.println("In active window get GPS coordinates wait max 20 minutes.");
@@ -513,6 +519,11 @@ void loop() {
 void startRecording() { 
   // Fetch the current date and time from the DS3231 
   DateTime now = rtc.now();
+  batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
+  logMessage("Battery Level...");
+  logMessage(String(batteryLevel));
+  Serial.println("Battery Level...");
+  Serial.println(String(batteryLevel));
   char deviceName[16];
   strlcpy(deviceName, readStringFromEEPROM(eepromAddress).c_str(), sizeof(deviceName));
   snprintf(filename, sizeof(filename), "/%s_%04d-%02d-%02d_%02d_%02d_%02d_%.6f_%.6f.wav", 
