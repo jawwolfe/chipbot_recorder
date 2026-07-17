@@ -49,14 +49,14 @@ const int RTC_SDA_PIN = 8;
 const int RTC_SCL_PIN = 9;
 
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
-const int START_1_HR = 6;   // Window 1
-const int START_1_MIN = 0;
-const int STOP_1_HR = 14;    // Window 1 End
-const int STOP_1_MIN = 22;
+const int START_1_HR = 5;   // Window 1
+const int START_1_MIN = 30;
+const int STOP_1_HR = 8;    // Window 1 End
+const int STOP_1_MIN = 30;
 const int START_2_HR = 20;  // Window 2 Start
-const int START_2_MIN = 15;
-const int STOP_2_HR = 21;   // Window 2 End
-const int STOP_2_MIN = 15;
+const int START_2_MIN = 30;
+const int STOP_2_HR = 22;   // Window 2 End
+const int STOP_2_MIN = 30;
 
 // --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
 const int SD_CS_PIN = 10;
