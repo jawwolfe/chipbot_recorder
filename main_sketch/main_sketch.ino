@@ -251,8 +251,7 @@ void setup() {
   }
   // Initialize BME280 on default Wire
   if (bme.begin(BME280_I2C_ADDR, &Wire)) {
-    Serial.printf("BME280: Connected! (0x%02X)\n", BME280_I2C_ADDR);
-    bmeFound = true;
+     bmeFound = true;
   } else {
     Serial.println("BME280: NOT found! (Check wiring or try 0x76)");
   }
@@ -392,7 +391,7 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
                                           BLECharacteristic::PROPERTY_READ |
                                           BLECharacteristic::PROPERTY_WRITE
                                         );
-    String initCharacteristic = "Coordinates: " + coordinatesString;
+    String initCharacteristic = "Coordinates: " + coordinatesString + ", Battery: " + String(batteryLevel);
     pCharacteristic->setValue(initCharacteristic);
     pService->start();
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -417,17 +416,6 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
       };
       esp_pm_configure(&pm_config);
     #endif
-
-    if (bmeFound) {
-    float temp     = bme.readTemperature();
-    float humidity = bme.readHumidity();
-    float pressure = bme.readPressure() / 100.0F;
-    Serial.printf("Temp: %.2f °C | Hum: %.2f %% | Press: %.2f hPa\n", 
-                  temp, humidity, pressure);
-    } else {
-      Serial.println("BME not found/");
-    }
-
 
     i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
     i2s_set_pin(I2S_NUM, &pin_config);
@@ -549,6 +537,16 @@ void startRecording() {
   logMessage(String(batteryLevel));
   Serial.println("Battery Level...");
   Serial.println(String(batteryLevel));
+  if (bmeFound) {
+  float temp     = bme.readTemperature();
+  float humidity = bme.readHumidity();
+  float pressure = bme.readPressure() / 100.0F;
+  String msgBuffer = String("Temp: ") + temp + " °C | Hum: " + humidity + " % | Press: " + pressure + " hPa\n";
+  Serial.print(msgBuffer);
+  logMessage(msgBuffer.c_str());
+  } else {
+    Serial.println("BME not found");
+  }
   char deviceName[16];
   strlcpy(deviceName, readStringFromEEPROM(eepromAddress).c_str(), sizeof(deviceName));
   snprintf(filename, sizeof(filename), "/%s_%04d-%02d-%02d_%02d_%02d_%02d_%.6f_%.6f.wav", 
