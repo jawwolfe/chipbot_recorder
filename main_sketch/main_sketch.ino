@@ -11,6 +11,8 @@
 #include <BLEServer.h>
 #include <EEPROM.h>
 #include <TinyGPS++.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
 
 // --- I2S MIC GLOBAL DEFAULTS and VARIABLES ---
 const int I2S_BCK_PIN = 4;
@@ -40,23 +42,24 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 300000; // Continuous 10-minute intervals (600K ms)
+const unsigned long recordingTimeLimit = 30000; // Continuous 10-minute intervals (600K ms)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
 // --- RTC MODULE GLOBAL DEFAULTS and VARIABLES ---
-const int RTC_SDA_PIN = 8;
-const int RTC_SCL_PIN = 9;
+const int I2C_SDA_PIN = 8;
+const int I2C_SCL_PIN = 9;
+#define BME280_I2C_ADDR 0x76
 
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
 const int START_1_HR = 5;   // Window 1
 const int START_1_MIN = 30;
-const int STOP_1_HR = 8;    // Window 1 End
+const int STOP_1_HR = 23;    // Window 1 End
 const int STOP_1_MIN = 30;
-const int START_2_HR = 20;  // Window 2 Start
-const int START_2_MIN = 30;
-const int STOP_2_HR = 22;   // Window 2 End
-const int STOP_2_MIN = 30;
+const int START_2_HR = 23;  // Window 2 Start
+const int START_2_MIN = 34;
+const int STOP_2_HR = 24;   // Window 2 End
+const int STOP_2_MIN = 0;
 
 // --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
 const int SD_CS_PIN = 10;
@@ -75,7 +78,7 @@ const double DEFAULT_LNG =  0.0;
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-const unsigned long GPS_SETUP_TIMEOUT_MS = 900000;   // 15 minutes max wait in setup (900K ms)
+const unsigned long GPS_SETUP_TIMEOUT_MS = 30000;   // 15 minutes max wait in setup (900K ms)
 const int MOSFET_GATE_PIN  = 1;
 //TIMEZONE
 RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
@@ -120,6 +123,8 @@ File file;
 File file1;
 char filename[92];
 RTC_DS3231 rtc;
+Adafruit_BME280 bme;
+bool bmeFound = false;
 TinyGPSPlus gps;
 
 // Forward Declarations
@@ -238,11 +243,20 @@ void setup() {
   pinMode(MOSFET_GATE_PIN, OUTPUT);
   digitalWrite(MOSFET_GATE_PIN, LOW);
 
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   // -- Initilize RTC and SD
   if (!rtc.begin()) {
     Serial.println("Error: Could not find DS3231 module. Check your wiring!");
     while (1);
   }
+  // Initialize BME280 on default Wire
+  if (bme.begin(BME280_I2C_ADDR, &Wire)) {
+    Serial.printf("BME280: Connected! (0x%02X)\n", BME280_I2C_ADDR);
+    bmeFound = true;
+  } else {
+    Serial.println("BME280: NOT found! (Check wiring or try 0x76)");
+  }
+
   SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   if (!SD.begin(SD_CS_PIN)) {
     Serial.println("SD Card not Initialize!");
@@ -403,6 +417,17 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
       };
       esp_pm_configure(&pm_config);
     #endif
+
+    if (bmeFound) {
+    float temp     = bme.readTemperature();
+    float humidity = bme.readHumidity();
+    float pressure = bme.readPressure() / 100.0F;
+    Serial.printf("Temp: %.2f °C | Hum: %.2f %% | Press: %.2f hPa\n", 
+                  temp, humidity, pressure);
+    } else {
+      Serial.println("BME not found/");
+    }
+
 
     i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
     i2s_set_pin(I2S_NUM, &pin_config);
