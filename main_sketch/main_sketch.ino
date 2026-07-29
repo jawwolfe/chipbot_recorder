@@ -54,7 +54,7 @@ const int I2C_SCL_PIN = 9;
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
 const int START_1_HR = 5;   // Window 1
 const int START_1_MIN = 30;
-const int STOP_1_HR = 23;    // Window 1 End
+const int STOP_1_HR = 20;    // Window 1 End
 const int STOP_1_MIN = 30;
 const int START_2_HR = 23;  // Window 2 Start
 const int START_2_MIN = 34;
@@ -78,7 +78,7 @@ const double DEFAULT_LNG =  0.0;
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-const unsigned long GPS_SETUP_TIMEOUT_MS = 30000;   // 15 minutes max wait in setup (900K ms)
+const unsigned long GPS_SETUP_TIMEOUT_MS = 900000;   // 15 minutes max wait in setup (900K ms)
 const int MOSFET_GATE_PIN  = 1;
 //TIMEZONE
 RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
@@ -101,6 +101,7 @@ bool ledStateRec = false;
 // --- BLUETOOTH BLE ---
 const char* const SERVICE_UUID        = "fdcff45e-438b-4a62-acf6-dbd852aae4b1";
 const char* const CHARACTERISTIC_UUID = "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072";
+BLECharacteristic *pCharacteristic = nullptr;
 
 // --- BAT POWER MONITORING ---
 float batteryLevel;
@@ -386,7 +387,7 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
     BLEDevice::init(retrievedString);
     BLEServer *pServer = BLEDevice::createServer();
     BLEService *pService = pServer->createService(SERVICE_UUID);
-    BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+    pCharacteristic = pService->createCharacteristic(
                                           CHARACTERISTIC_UUID,
                                           BLECharacteristic::PROPERTY_READ |
                                           BLECharacteristic::PROPERTY_WRITE
@@ -530,22 +531,35 @@ void loop() {
 }
 
 void startRecording() { 
-  // Fetch the current date and time from the DS3231 
+// Fetch the current date and time from the DS3231 
   DateTime now = rtc.now();
   batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
-  logMessage("Battery Level...");
-  logMessage(String(batteryLevel));
-  Serial.println("Battery Level...");
-  Serial.println(String(batteryLevel));
+  float temp = 0.0;
+  float humidity = 0.0;
+  float pressure = 0.0;
   if (bmeFound) {
-  float temp     = bme.readTemperature();
-  float humidity = bme.readHumidity();
-  float pressure = bme.readPressure() / 100.0F;
-  String msgBuffer = String("Temp: ") + temp + " °C | Hum: " + humidity + " % | Press: " + pressure + " hPa\n";
-  Serial.print(msgBuffer);
-  logMessage(msgBuffer.c_str());
+    temp     = bme.readTemperature();
+    humidity = bme.readHumidity();
+    pressure = bme.readPressure() / 100.0F;
+    String msgBuffer = String("Temp: ") + temp + " °C | Hum: " + humidity + " % | Bat: " + batteryLevel + "\n";
+    Serial.print(msgBuffer);
+    logMessage(msgBuffer.c_str());
   } else {
     Serial.println("BME not found");
+  }
+  if (pCharacteristic != nullptr) {
+    char latStr[16], lngStr[16];
+    dtostrf(globalLat, 1, 6, latStr);
+    dtostrf(globalLng, 1, 6, lngStr);
+    String updatedPayload = "Coords:" + String(latStr) + "," + String(lngStr) +
+                            " | Bat:" + String(batteryLevel, 1) + "%";
+    if (bmeFound) {
+      updatedPayload += " | Temp:" + String(temp, 1) + "C" +
+                        " | Hum:" + String(humidity, 1) + "%";
+    }
+    pCharacteristic->setValue(updatedPayload.c_str());
+    pCharacteristic->notify(); // Pushes update directly to connected clients if subscriptions are enabled
+    Serial.println("BLE Characteristic updated!");
   }
   char deviceName[16];
   strlcpy(deviceName, readStringFromEEPROM(eepromAddress).c_str(), sizeof(deviceName));
