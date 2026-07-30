@@ -42,7 +42,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 30000; // Continuous 10-minute intervals (600K ms)
+const unsigned long recordingTimeLimit = 300000; // Continuous 10-minute intervals (600K ms)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -102,6 +102,9 @@ bool ledStateRec = false;
 const char* const SERVICE_UUID        = "fdcff45e-438b-4a62-acf6-dbd852aae4b1";
 const char* const CHARACTERISTIC_UUID = "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072";
 BLECharacteristic *pCharacteristic = nullptr;
+BLEAdvertising *pAdvertising = nullptr;
+const unsigned long BLE_REFRESH_INTERVAL = 30000; // 30 seconds
+unsigned long lastBleRefresh = 0;
 
 // --- BAT POWER MONITORING ---
 float batteryLevel;
@@ -230,6 +233,24 @@ void logMessage(const String &message) {
   } else {
     Serial.println("CRITICAL: Failed to open file for appending debug data!");
   }
+}
+
+uint64_t logStorageStatus() {
+  uint64_t totalBytes = SD.totalBytes();
+  uint64_t usedBytes = SD.usedBytes();
+  uint64_t freeBytes = totalBytes - usedBytes;
+  float freeMB = freeBytes / (1024.0 * 1024.0);
+  float totalMB = totalBytes / (1024.0 * 1024.0);
+  String msg = "SD Storage: " + String(freeMB, 1) + " MB free / " + String(totalMB, 1) + " MB total";
+  Serial.println(msg);
+  logMessage(msg);
+  const float MB_PER_RECORDING = 5.76;
+  if (freeMB < MB_PER_RECORDING * 2) {
+    String warn = "WARNING: Low SD space - less than 2 recordings remaining!";
+    Serial.println(warn);
+    logMessage(warn);
+  }
+  return freeBytes;
 }
 
 void setup() {
@@ -395,7 +416,7 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
     String initCharacteristic = "Coordinates: " + coordinatesString + ", Battery: " + String(batteryLevel);
     pCharacteristic->setValue(initCharacteristic);
     pService->start();
-    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setScanResponse(true);
     // MIN & MAX advertising intervals. 
@@ -457,7 +478,6 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
 }
 
 void loop() {  
-
   // Check if battery is low
   batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
   if (batteryLevel < LOW_BATTERY_THRESHOLD) {
@@ -473,6 +493,40 @@ void loop() {
     // Force the LED off if battery is safe
     digitalWrite(LED_BAT, LOW);
     ledStateBattery = false;
+  }
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastBleRefresh >= BLE_REFRESH_INTERVAL) {
+    lastBleRefresh = currentMillis;
+
+    // Refresh advertising in case the stack silently stopped
+    if (pAdvertising != nullptr) {
+      pAdvertising->start();
+    }
+    // Refresh characteristic payload with current readings
+    if (pCharacteristic != nullptr) {
+      float temp = 0.0, humidity = 0.0;
+      if (bmeFound) {
+        temp     = bme.readTemperature();
+        humidity = bme.readHumidity();
+      }
+      char latStr[16], lngStr[16];
+      dtostrf(globalLat, 1, 6, latStr);
+      dtostrf(globalLng, 1, 6, lngStr);
+      unsigned long elapsedMin = isRecording ? (currentMillis - recordingStartTime) / 60000 : 0;
+      uint64_t totalBytes = SD.totalBytes();
+      uint64_t usedBytes = SD.usedBytes();
+      float freeMB = (totalBytes - usedBytes) / (1024.0 * 1024.0);
+      String updatedPayload = "Coords:" + String(latStr) + "," + String(lngStr) +
+                              " | Bat:" + String(batteryLevel, 1) + "%";
+      if (bmeFound) {
+        updatedPayload += " | Temp:" + String(temp, 1) + "C" +
+                          " | Hum:" + String(humidity, 1) + "%";
+      }
+      updatedPayload += " | Elapsed:" + String(elapsedMin) + "m";
+      updatedPayload += " | Free:" + String(freeMB, 0) + "MB";
+      pCharacteristic->setValue(updatedPayload.c_str());
+      pCharacteristic->notify();
+    }
   }
 
   // --- CONTINUOUS AUDIO TRACK MANAGEMENT ---
@@ -561,6 +615,12 @@ void startRecording() {
     pCharacteristic->notify(); // Pushes update directly to connected clients if subscriptions are enabled
     Serial.println("BLE Characteristic updated!");
   }
+  if (pAdvertising != nullptr) {
+    pAdvertising->stop();
+    pAdvertising->start();
+    Serial.println("BLE advertising refreshed.");
+    logMessage("BLE advertising refreshed.");
+  }
   char deviceName[16];
   strlcpy(deviceName, readStringFromEEPROM(eepromAddress).c_str(), sizeof(deviceName));
   snprintf(filename, sizeof(filename), "/%s_%04d-%02d-%02d_%02d_%02d_%02d_%.6f_%.6f.wav", 
@@ -627,14 +687,7 @@ void appendAudioToSD() {
     if (bytesWritten < (size_t)(samplesCount * 2)) {
       Serial.println("CRITICAL ERROR: Write failed!");
       logMessage("CRITICAL ERROR: Write failed! ");
-      uint64_t totalBytes = SD.totalBytes();
-      uint64_t usedBytes = SD.usedBytes();
-      uint64_t freeBytes = totalBytes - usedBytes;
-
-      Serial.printf("Storage Status: %llu / %llu bytes used.\n", usedBytes, totalBytes);
-      //logMessage("Storage Status: %llu / %llu bytes used.\n", usedBytes, totalBytes);
-      Serial.printf("Remaining Space: %llu bytes.", freeBytes);
-      //logMessage("Remaining Space: %llu bytes.", freeBytes);
+      uint64_t freeBytes = logStorageStatus();
       if (freeBytes < 512) {
           Serial.println("Error Cause: Insufficient storage space on SD card.");
           logMessage("Error Cause: Insufficient storage space on SD card. ");
