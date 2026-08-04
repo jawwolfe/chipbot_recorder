@@ -42,7 +42,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 300000; // Continuous 10-minute intervals (600K ms)
+const unsigned long recordingTimeLimit = 10000; // Continuous 10-minute intervals (600,000 ms)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -78,7 +78,7 @@ const double DEFAULT_LNG =  0.0;
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-const unsigned long GPS_SETUP_TIMEOUT_MS = 900000;   // 15 minutes max wait in setup (900K ms)
+const unsigned long GPS_SETUP_TIMEOUT_MS =  10000;   // 15 minutes max wait in setup (900K ms)
 const int MOSFET_GATE_PIN  = 1;
 //TIMEZONE
 RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
