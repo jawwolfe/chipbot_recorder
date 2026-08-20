@@ -322,7 +322,7 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
 
   //one time code to enter the unit id into the EEPROM as a config
   //char charBuffer[MAX_STRING_LENGTH];
-  //String myString = "aw_chipbot_02";  
+  //String myString = "aw-chipbot-02";  
   //writeStringToEEPROM(eepromAddress, myString);
   //Serial.println("String saved successfully.");
   //String retrievedString = readStringFromEEPROM(eepromAddress);
