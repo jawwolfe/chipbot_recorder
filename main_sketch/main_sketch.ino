@@ -623,7 +623,7 @@ void startRecording() {
   }
   char deviceName[16];
   strlcpy(deviceName, readStringFromEEPROM(eepromAddress).c_str(), sizeof(deviceName));
-  snprintf(filename, sizeof(filename), "/%s_%04d-%02d-%02d_%02d_%02d_%02d_%.6f_%.6f.wav", 
+  snprintf(filename, sizeof(filename), "/%s_%04d-%02d-%02d_%02d%02d%02d_%.6f_%.6f.wav", 
           deviceName, now.year(), now.month(), now.day(), 
           now.hour(), now.minute(), now.second(), globalLat, globalLng);
 
