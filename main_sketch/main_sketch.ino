@@ -332,14 +332,14 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
   if (inWindow1 || inWindow2) {
     // We are supposed to be awake! Proceed to void loop()
     // Log file work establish filename format with minutes from RTC for initial boot
-    char bootLogName[40];
-    snprintf(bootLogName, sizeof(bootLogName), "/debug_%04d%02d%02d_%02d%02d.txt", 
-            now.year(), now.month(), now.day(), now.hour(), now.minute());
+    char bootLogName[50];
+    char deviceName[16];
+    strlcpy(deviceName, readStringFromEEPROM(eepromAddress).c_str(), sizeof(deviceName));
+    snprintf(bootLogName, sizeof(bootLogName), "/%s_%04d-%02d-%02d-%02d%02d%02d_log.txt", 
+            deviceName, now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
     currentFileName = String(bootLogName);
     
     batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
-    logMessage("Battery Level...");
-    logMessage(String(batteryLevel));
     Serial.println("Battery Level...");
     Serial.println(String(batteryLevel));
 
