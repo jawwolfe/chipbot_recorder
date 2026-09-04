@@ -42,7 +42,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 10000; // Continuous 10-minute intervals (600,000 ms)
+const unsigned long recordingTimeLimit = 10000; // 20 minute files is sweet spit (1.2 Million)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -678,7 +678,10 @@ void appendAudioToSD() {
 
     for (int i = 0; i < samplesCount; i++) {
       // Downsample 32-bit to 16-bit
-      samples16[i] = (int16_t)(i2sBuffer[i] >> 14);
+      int32_t sample = i2sBuffer[i] >> 16;  
+      if (sample > 32767) sample = 32767;
+      if (sample < -32768) sample = -32768;
+      samples16[i] = (int16_t)sample;
     }
 
     // Write data to SD Card
