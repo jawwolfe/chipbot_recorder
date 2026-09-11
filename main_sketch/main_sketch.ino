@@ -42,7 +42,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 10000; // 20 minute files is sweet spit (1.2 Million)
+const unsigned long recordingTimeLimit = 900000; // 20 minute files is sweet spit (1.2 Million)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -52,14 +52,14 @@ const int I2C_SCL_PIN = 9;
 #define BME280_I2C_ADDR 0x76
 
 // --- DAILY WAKEUP WINDOWS (in 24-hour format) --
-const int START_1_HR = 5;   // Window 1
+const int START_1_HR = 4;  // Window 1
 const int START_1_MIN = 30;
-const int STOP_1_HR = 20;    // Window 1 End
-const int STOP_1_MIN = 30;
-const int START_2_HR = 23;  // Window 2 Start
-const int START_2_MIN = 34;
-const int STOP_2_HR = 24;   // Window 2 End
-const int STOP_2_MIN = 0;
+const int STOP_1_HR = 11;    // Window 1 End
+const int STOP_1_MIN = 0;
+const int START_2_HR = 15;  // Window 2 Start
+const int START_2_MIN = 0;
+const int STOP_2_HR = 20;   // Window 2 End
+const int STOP_2_MIN = 30;
 
 // --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
 const int SD_CS_PIN = 10;
@@ -78,7 +78,7 @@ const double DEFAULT_LNG =  0.0;
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-const unsigned long GPS_SETUP_TIMEOUT_MS =  10000;   // 15 minutes max wait in setup (900K ms)
+const unsigned long GPS_SETUP_TIMEOUT_MS =  2400000;   // 15 minutes max wait in setup (900K ms)
 const int MOSFET_GATE_PIN  = 1;
 //TIMEZONE
 RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
