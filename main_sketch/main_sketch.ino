@@ -13,6 +13,7 @@
 #include <TinyGPS++.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
+#include "driver/gpio.h"
 
 // --- I2S MIC GLOBAL DEFAULTS and VARIABLES ---
 const int I2S_BCK_PIN = 4;
@@ -42,7 +43,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 900000; // 20 minute files is sweet spit (1.2 Million)
+const unsigned long recordingTimeLimit = 900000; // 15 minute files is sweet spot (900k)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -107,8 +108,9 @@ const unsigned long BLE_REFRESH_INTERVAL = 30000; // 30 seconds
 unsigned long lastBleRefresh = 0;
 
 // --- BAT POWER MONITORING ---
+const float DIVIDER_RATIO = 1.4346f;// (27k + 100k) / 100k
 float batteryLevel;
-const int BAT_PIN = 18;
+const int BAT_PIN = 2;
 const float LOW_BATTERY_THRESHOLD = 82.0f; // Flash below 80%
 const unsigned long FLASH_INTERVAL = 500;  // Flash every 500ms
 unsigned long lastFlashTime = 0;
@@ -223,6 +225,30 @@ void printLocalTime() {
     logMessage("Local Time: " + String(timeBuffer));
 }
 
+float readBatteryVoltage() {
+  const int SAMPLES = 16;
+  uint32_t pinMV = 0;
+  uint32_t sum = 0;
+  for (int i = 0; i < SAMPLES; i++) {
+    sum += analogReadMilliVolts(BAT_PIN);
+    delay(2);
+  }
+  pinMV /= 16;
+  //Serial.printf("Raw pin mV: %u\n", pinMV);
+  float pinMillivolts = sum / (float)SAMPLES;
+  return (pinMillivolts * DIVIDER_RATIO) / 1000.0f; // battery volts
+}
+
+float voltageToPercent(float v) {
+  // Simple linear approximation between empty and full
+  const float V_EMPTY = 3.30f; // cutoff, not 3.0 - leaves safety margin
+  const float V_FULL  = 4.20f;
+  float pct = (v - V_EMPTY) / (V_FULL - V_EMPTY) * 100.0f;
+  if (pct > 100) pct = 100;
+  if (pct < 0) pct = 0;
+  return pct;
+}
+
 void logMessage(const String &message) {
   // Open file in Append mode. If it doesn't exist, it creates it automatically.
   file1 = SD.open(currentFileName, FILE_APPEND);
@@ -256,6 +282,9 @@ uint64_t logStorageStatus() {
 void setup() {
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
+  pinMode(BAT_PIN, INPUT);
+  gpio_pullup_dis((gpio_num_t)BAT_PIN);
+  gpio_pulldown_dis((gpio_num_t)BAT_PIN);
   pinMode(LED_REC, OUTPUT);
   pinMode(LED_DISC, OUTPUT);
   pinMode(LED_BAT, OUTPUT);
@@ -265,6 +294,7 @@ void setup() {
   pinMode(MOSFET_GATE_PIN, OUTPUT);
   digitalWrite(MOSFET_GATE_PIN, LOW);
 
+  /*
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   // -- Initilize RTC and SD
   if (!rtc.begin()) {
@@ -291,7 +321,7 @@ void setup() {
 
   //needed in certain circumstances to set the RTC clock with PC time
   //First use of RTC so the active period can be calculated before GPS
-if (rtc.lostPower() || rtc.now().year() < 2020) {
+  if (rtc.lostPower() || rtc.now().year() < 2020) {
     Serial.println("RTC lost power or is uninitialized! Setting fallback to compile time...");
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
@@ -339,7 +369,10 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
             deviceName, now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
     currentFileName = String(bootLogName);
     
-    batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
+    float batVoltage = readBatteryVoltage();
+    batteryLevel = voltageToPercent(batVoltage);
+    Serial.println("Battery voltage...");
+    Serial.println(String(batVoltage));
     Serial.println("Battery Level...");
     Serial.println(String(batteryLevel));
 
@@ -475,11 +508,14 @@ if (rtc.lostPower() || rtc.now().year() < 2020) {
       esp_sleep_enable_timer_wakeup((uint64_t)secondsToSleep * 1000000ULL);
       esp_deep_sleep_start();
   }
+  */
+  delay(100000);
 }
 
 void loop() {  
   // Check if battery is low
-  batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
+  float batVoltage = readBatteryVoltage();
+  batteryLevel = voltageToPercent(batVoltage);
   if (batteryLevel < LOW_BATTERY_THRESHOLD) {
     // Non-blocking flash logic
     
@@ -585,9 +621,10 @@ void loop() {
 }
 
 void startRecording() { 
-// Fetch the current date and time from the DS3231 
+  // Fetch the current date and time from the DS3231 
   DateTime now = rtc.now();
-  batteryLevel = map(analogRead(BAT_PIN), 0.0f, 4095.0f, 0, 100);
+  float batVoltage = readBatteryVoltage();
+  batteryLevel = voltageToPercent(batVoltage);
   float temp = 0.0;
   float humidity = 0.0;
   float pressure = 0.0;
