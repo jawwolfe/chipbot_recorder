@@ -43,7 +43,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 900000; // 15 minute files is sweet spot (900k)
+const unsigned long recordingTimeLimit = 90000; // 15 minute files is sweet spot (900k)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -79,7 +79,7 @@ const double DEFAULT_LNG =  0.0;
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-const unsigned long GPS_SETUP_TIMEOUT_MS =  2400000;   // 15 minutes max wait in setup (900K ms)
+const unsigned long GPS_SETUP_TIMEOUT_MS =  24000;   // 15 minutes max wait in setup (900K ms)
 const int MOSFET_GATE_PIN  = 1;
 //TIMEZONE
 RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
@@ -294,7 +294,7 @@ void setup() {
   pinMode(MOSFET_GATE_PIN, OUTPUT);
   digitalWrite(MOSFET_GATE_PIN, LOW);
 
-  /*
+  
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   // -- Initilize RTC and SD
   if (!rtc.begin()) {
@@ -508,8 +508,6 @@ void setup() {
       esp_sleep_enable_timer_wakeup((uint64_t)secondsToSleep * 1000000ULL);
       esp_deep_sleep_start();
   }
-  */
-  delay(100000);
 }
 
 void loop() {  
