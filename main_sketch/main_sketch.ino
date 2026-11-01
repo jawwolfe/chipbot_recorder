@@ -88,7 +88,6 @@ RTC_DATA_ATTR bool timezoneKnown = false;
 // --- LED PIN DEFINITIONS ---
 const int LED_REC = 14; // blue led for recording or listening
 const int LED_DISC = 17; // yellow led for SD disc status full or not ready
-const int LED_BAT = 7; // red led for battery voltage checks
 // -- used in startup disc check --
 int ledStateRecording = LOW; 
 // -- used in recording long blink when sampling--
@@ -108,13 +107,9 @@ const unsigned long BLE_REFRESH_INTERVAL = 30000; // 30 seconds
 unsigned long lastBleRefresh = 0;
 
 // --- BAT POWER MONITORING ---
-const float DIVIDER_RATIO = 1.4346f;// (27k + 100k) / 100k
 float batteryLevel;
 const int BAT_PIN = 2;
-const float LOW_BATTERY_THRESHOLD = 82.0f; // Flash below 80%
-const unsigned long FLASH_INTERVAL = 500;  // Flash every 500ms
-unsigned long lastFlashTime = 0;
-bool ledStateBattery = false;
+const float DIVIDER_RATIO = 1.365;  // 4.05V (meter) / 3.000V (ADC reading)
 
 // --- EEPROM CONSTANTS for storing device name---
 const int MAX_STRING_LENGTH = 16; 
@@ -287,8 +282,6 @@ void setup() {
   gpio_pulldown_dis((gpio_num_t)BAT_PIN);
   pinMode(LED_REC, OUTPUT);
   pinMode(LED_DISC, OUTPUT);
-  pinMode(LED_BAT, OUTPUT);
-  digitalWrite(LED_BAT, LOW);
   digitalWrite(LED_REC, LOW);
   digitalWrite(LED_DISC, LOW);
   pinMode(MOSFET_GATE_PIN, OUTPUT);
@@ -318,14 +311,12 @@ void setup() {
       delay(500);
     }
   }
-
   //needed in certain circumstances to set the RTC clock with PC time
   //First use of RTC so the active period can be calculated before GPS
   if (rtc.lostPower() || rtc.now().year() < 2020) {
     Serial.println("RTC lost power or is uninitialized! Setting fallback to compile time...");
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
-
   // Get current time from the DS3231 module
   DateTime now = rtc.now();
 
@@ -350,9 +341,10 @@ void setup() {
     return;
   }
 
+  
   //one time code to enter the unit id into the EEPROM as a config
   //char charBuffer[MAX_STRING_LENGTH];
-  //String myString = "aw-chipbot-02";  
+  //String myString = "aw-chipbot-03";  
   //writeStringToEEPROM(eepromAddress, myString);
   //Serial.println("String saved successfully.");
   //String retrievedString = readStringFromEEPROM(eepromAddress);
@@ -369,12 +361,13 @@ void setup() {
             deviceName, now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
     currentFileName = String(bootLogName);
     
-    float batVoltage = readBatteryVoltage();
-    batteryLevel = voltageToPercent(batVoltage);
-    Serial.println("Battery voltage...");
-    Serial.println(String(batVoltage));
+    batteryLevel = voltageToPercent(readBatteryVoltage());
     Serial.println("Battery Level...");
     Serial.println(String(batteryLevel));
+
+    Serial.printf("BAT_PIN=%d raw=%d pin_mV=%u batt_V=%.3f pct=%.0f\n",
+              BAT_PIN, analogRead(BAT_PIN), analogReadMilliVolts(BAT_PIN),
+              readBatteryVoltage(), batteryLevel);
 
     digitalWrite(MOSFET_GATE_PIN, LOW);
     Serial.println("In active window get GPS coordinates wait max 20 minutes.");
@@ -511,23 +504,6 @@ void setup() {
 }
 
 void loop() {  
-  // Check if battery is low
-  float batVoltage = readBatteryVoltage();
-  batteryLevel = voltageToPercent(batVoltage);
-  if (batteryLevel < LOW_BATTERY_THRESHOLD) {
-    // Non-blocking flash logic
-    
-    unsigned long currentMillis = millis();
-    if (currentMillis - lastFlashTime >= FLASH_INTERVAL) {
-      lastFlashTime = currentMillis;
-      ledStateBattery = !ledStateBattery; // Toggle the LED state
-      digitalWrite(LED_BAT, ledStateBattery);
-    }
-  } else {
-    // Force the LED off if battery is safe
-    digitalWrite(LED_BAT, LOW);
-    ledStateBattery = false;
-  }
   unsigned long currentMillis = millis();
   if (currentMillis - lastBleRefresh >= BLE_REFRESH_INTERVAL) {
     lastBleRefresh = currentMillis;
@@ -618,11 +594,30 @@ void loop() {
   }
 }
 
+float readBatteryVoltage() {
+  const int SAMPLES = 16;
+  uint32_t sum = 0;
+  for (int i = 0; i < SAMPLES; i++) {
+    sum += analogReadMilliVolts(BAT_PIN);
+    delay(2);
+  }
+  float pinMillivolts = sum / (float)SAMPLES;
+  return (pinMillivolts * DIVIDER_RATIO) / 1000.0f;
+}
+
+float voltageToPercent(float v) {
+  const float V_EMPTY = 3.30f;
+  const float V_FULL  = 4.20f;
+  float pct = (v - V_EMPTY) / (V_FULL - V_EMPTY) * 100.0f;
+  if (pct > 100) pct = 100;
+  if (pct < 0) pct = 0;
+  return pct;
+}
+
 void startRecording() { 
   // Fetch the current date and time from the DS3231 
   DateTime now = rtc.now();
-  float batVoltage = readBatteryVoltage();
-  batteryLevel = voltageToPercent(batVoltage);
+  batteryLevel = voltageToPercent(readBatteryVoltage());
   float temp = 0.0;
   float humidity = 0.0;
   float pressure = 0.0;
