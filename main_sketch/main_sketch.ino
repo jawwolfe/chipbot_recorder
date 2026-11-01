@@ -13,6 +13,7 @@
 #include <TinyGPS++.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
+#include "driver/gpio.h"
 
 // --- I2S MIC GLOBAL DEFAULTS and VARIABLES ---
 const int I2S_BCK_PIN = 4;
@@ -42,7 +43,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 900000; // 20 minute files is sweet spit (1.2 Million)
+const unsigned long recordingTimeLimit = 90000; // 15 minute files is sweet spot (900k)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -78,7 +79,7 @@ const double DEFAULT_LNG =  0.0;
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-const unsigned long GPS_SETUP_TIMEOUT_MS =  2400000;   // 15 minutes max wait in setup (900K ms)
+const unsigned long GPS_SETUP_TIMEOUT_MS =  24000;   // 15 minutes max wait in setup (900K ms)
 const int MOSFET_GATE_PIN  = 1;
 //TIMEZONE
 RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
@@ -219,6 +220,30 @@ void printLocalTime() {
     logMessage("Local Time: " + String(timeBuffer));
 }
 
+float readBatteryVoltage() {
+  const int SAMPLES = 16;
+  uint32_t pinMV = 0;
+  uint32_t sum = 0;
+  for (int i = 0; i < SAMPLES; i++) {
+    sum += analogReadMilliVolts(BAT_PIN);
+    delay(2);
+  }
+  pinMV /= 16;
+  //Serial.printf("Raw pin mV: %u\n", pinMV);
+  float pinMillivolts = sum / (float)SAMPLES;
+  return (pinMillivolts * DIVIDER_RATIO) / 1000.0f; // battery volts
+}
+
+float voltageToPercent(float v) {
+  // Simple linear approximation between empty and full
+  const float V_EMPTY = 3.30f; // cutoff, not 3.0 - leaves safety margin
+  const float V_FULL  = 4.20f;
+  float pct = (v - V_EMPTY) / (V_FULL - V_EMPTY) * 100.0f;
+  if (pct > 100) pct = 100;
+  if (pct < 0) pct = 0;
+  return pct;
+}
+
 void logMessage(const String &message) {
   // Open file in Append mode. If it doesn't exist, it creates it automatically.
   file1 = SD.open(currentFileName, FILE_APPEND);
@@ -252,6 +277,9 @@ uint64_t logStorageStatus() {
 void setup() {
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
+  pinMode(BAT_PIN, INPUT);
+  gpio_pullup_dis((gpio_num_t)BAT_PIN);
+  gpio_pulldown_dis((gpio_num_t)BAT_PIN);
   pinMode(LED_REC, OUTPUT);
   pinMode(LED_DISC, OUTPUT);
   digitalWrite(LED_REC, LOW);
@@ -259,6 +287,7 @@ void setup() {
   pinMode(MOSFET_GATE_PIN, OUTPUT);
   digitalWrite(MOSFET_GATE_PIN, LOW);
 
+  
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   // -- Initilize RTC and SD
   if (!rtc.begin()) {
@@ -586,7 +615,7 @@ float voltageToPercent(float v) {
 }
 
 void startRecording() { 
-// Fetch the current date and time from the DS3231 
+  // Fetch the current date and time from the DS3231 
   DateTime now = rtc.now();
   batteryLevel = voltageToPercent(readBatteryVoltage());
   float temp = 0.0;
