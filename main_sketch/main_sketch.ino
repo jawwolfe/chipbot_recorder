@@ -43,7 +43,7 @@ const i2s_pin_config_t pin_config = {
 };
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 90000; // 15 minute files is sweet spot (900k)
+const unsigned long recordingTimeLimit = 200000; // 15 minute files is sweet spot (900k)
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -79,7 +79,7 @@ const double DEFAULT_LNG =  0.0;
 double globalLat = DEFAULT_LAT;
 double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
-const unsigned long GPS_SETUP_TIMEOUT_MS =  24000;   // 15 minutes max wait in setup (900K ms)
+const unsigned long GPS_SETUP_TIMEOUT_MS =  900000;   // 15 minutes max wait in setup (900K ms)
 const int MOSFET_GATE_PIN  = 1;
 //TIMEZONE
 RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
@@ -220,30 +220,6 @@ void printLocalTime() {
     logMessage("Local Time: " + String(timeBuffer));
 }
 
-float readBatteryVoltage() {
-  const int SAMPLES = 16;
-  uint32_t pinMV = 0;
-  uint32_t sum = 0;
-  for (int i = 0; i < SAMPLES; i++) {
-    sum += analogReadMilliVolts(BAT_PIN);
-    delay(2);
-  }
-  pinMV /= 16;
-  //Serial.printf("Raw pin mV: %u\n", pinMV);
-  float pinMillivolts = sum / (float)SAMPLES;
-  return (pinMillivolts * DIVIDER_RATIO) / 1000.0f; // battery volts
-}
-
-float voltageToPercent(float v) {
-  // Simple linear approximation between empty and full
-  const float V_EMPTY = 3.30f; // cutoff, not 3.0 - leaves safety margin
-  const float V_FULL  = 4.20f;
-  float pct = (v - V_EMPTY) / (V_FULL - V_EMPTY) * 100.0f;
-  if (pct > 100) pct = 100;
-  if (pct < 0) pct = 0;
-  return pct;
-}
-
 void logMessage(const String &message) {
   // Open file in Append mode. If it doesn't exist, it creates it automatically.
   file1 = SD.open(currentFileName, FILE_APPEND);
@@ -341,10 +317,9 @@ void setup() {
     return;
   }
 
-  
-  //one time code to enter the unit id into the EEPROM as a config
+    //one time code to enter the unit id into the EEPROM as a config
   //char charBuffer[MAX_STRING_LENGTH];
-  //String myString = "aw-chipbot-03";  
+  //String myString = "aw-chipbot-03.1";  
   //writeStringToEEPROM(eepromAddress, myString);
   //Serial.println("String saved successfully.");
   //String retrievedString = readStringFromEEPROM(eepromAddress);
