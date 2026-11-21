@@ -250,6 +250,15 @@ uint64_t logStorageStatus() {
   return freeBytes;
 }
 
+RTC_DATA_ATTR char lastError[64] = ""; 
+bool mountSD() {
+  SD.end();
+  SPI.end();
+  delay(200);
+  SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+  return SD.begin(SD_CS_PIN);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
@@ -265,7 +274,7 @@ void setup() {
 
   
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-  // -- Initilize RTC and SD
+  // -- Initilize RTC
   if (!rtc.begin()) {
     Serial.println("Error: Could not find DS3231 module. Check your wiring!");
     while (1);
@@ -277,16 +286,28 @@ void setup() {
     Serial.println("BME280: NOT found! (Check wiring or try 0x76)");
   }
 
-  SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
-  if (!SD.begin(SD_CS_PIN)) {
-    Serial.println("SD Card not Initialize!");
-    while (1) {
+  //initialize SD keep trying
+  bool sdOk = false;
+  for (int attempt = 1; attempt <= 5 && !sdOk; attempt++) {
+    sdOk = mountSD();
+    if (!sdOk) {
+      Serial.printf("SD mount attempt %d failed\n", attempt);
+      delay(500);
+    }
+  }
+  if (!sdOk) {
+    Serial.println("SD Card not Initialized! Blinking, then restarting.");
+    strlcpy(lastError, "SD.begin failed in setup", sizeof(lastError));
+    unsigned long t = millis();
+    while (millis() - t < 30000) {      // blink for 30 s so you can still see the fault
       digitalWrite(LED_DISC, HIGH);
       delay(500);
       digitalWrite(LED_DISC, LOW);
       delay(500);
     }
+    esp_restart();
   }
+
   //needed in certain circumstances to set the RTC clock with PC time
   //First use of RTC so the active period can be calculated before GPS
   if (rtc.lostPower() || rtc.now().year() < 2020) {
@@ -317,9 +338,9 @@ void setup() {
     return;
   }
 
-    //one time code to enter the unit id into the EEPROM as a config
+  //one time code to enter the unit id into the EEPROM as a config
   //char charBuffer[MAX_STRING_LENGTH];
-  //String myString = "aw-chipbot-03.1";  
+  //String myString = "aw-chipbot-03.3";  
   //writeStringToEEPROM(eepromAddress, myString);
   //Serial.println("String saved successfully.");
   //String retrievedString = readStringFromEEPROM(eepromAddress);
@@ -636,22 +657,40 @@ void startRecording() {
   logMessage("Recording has started:  ");
   Serial.println(filename);
   logMessage(String(filename) + " ");
+
+
   file = SD.open(filename, FILE_WRITE);
   if (!file) {
-    Serial.println("File is not Open!");
-    logMessage("File is not Open! ");
-    //Turn off blue 3 led
+    Serial.println("File is not Open! Trying to re-mount the SD card...");
     digitalWrite(LED_REC, LOW);
-    //Fast blink the 17 yellow for 10 seconds then return to lisitening
-    startDiscError = millis();
-    while (millis() - startDiscError <= intDiscError) {
-        digitalWrite(LED_DISC, HIGH);
-        delay(500);
-        digitalWrite(LED_DISC, LOW);
-        delay(500);
+
+    // Try up to 3 times: re-mount the card, then open the file again
+    for (int attempt = 1; attempt <= 3 && !file; attempt++) {
+      digitalWrite(LED_DISC, HIGH);
+      if (mountSD()) {
+        file = SD.open(filename, FILE_WRITE);
+      }
+      digitalWrite(LED_DISC, LOW);
+      if (!file) delay(500);
     }
-    return;
+
+    if (!file) {
+      // Recovery failed: blink briefly so the fault is visible, then restart
+      Serial.println("SD recovery failed. Restarting.");
+      strlcpy(lastError, "file open failed in startRecording", sizeof(lastError));
+      for (int i = 0; i < 6; i++) {
+        digitalWrite(LED_DISC, HIGH);
+        delay(250);
+        digitalWrite(LED_DISC, LOW);
+        delay(250);
+      }
+      esp_restart();
+    }
+    // Card is back. Log it now that the SD card works again.
+    logMessage("File open failed; SD re-mounted OK and file opened.");
+    i2s_zero_dma_buffer(I2S_NUM);   // drop stale audio so the new file doesn't start with old samples
   }
+
   writeWavHeader(file, SAMPLE_RATE, 16, 1, 0);
   isRecording = true;
   lastRecBlinkTime = millis();
@@ -674,7 +713,8 @@ void stopRecording() {
 void appendAudioToSD() {
     size_t bytesRead;
     int32_t i2sBuffer[256]; 
- 
+    static uint8_t writeFailures = 0; 
+
     i2s_read(I2S_NUM_0, (void *)i2sBuffer, sizeof(i2sBuffer), &bytesRead, portMAX_DELAY);
 
     int16_t samples16[256];
@@ -691,31 +731,44 @@ void appendAudioToSD() {
 
     // Write data to SD Card
     size_t bytesWritten = file.write((uint8_t *)samples16, samplesCount * 2);
+    
+    if (bytesWritten == (size_t)(samplesCount * 2)) {
+      writeFailures = 0;
+      return;
+    }
 
-    if (bytesWritten < (size_t)(samplesCount * 2)) {
-      Serial.println("CRITICAL ERROR: Write failed!");
-      logMessage("CRITICAL ERROR: Write failed! ");
-      uint64_t freeBytes = logStorageStatus();
-      if (freeBytes < 512) {
-          Serial.println("Error Cause: Insufficient storage space on SD card.");
-          logMessage("Error Cause: Insufficient storage space on SD card. ");
-          // Halt execution or trigger a system alert/LED here
-          digitalWrite(LED_REC, LOW); 
-          while (true) { 
-            digitalWrite(LED_DISC, HIGH);
-            delay(1250); 
-            digitalWrite(LED_DISC, LOW);
-          } 
-      } else {
-          Serial.println("Error Cause: Hardware disconnect or file corruption.");
-          logMessage("Error Cause: Hardware disconnect or file corruption. ");
-          while (true) { 
-            digitalWrite(LED_DISC, HIGH);
-            delay(1250); 
-            digitalWrite(LED_DISC, LOW);
-          } 
+    // ---- write failed ----
+    Serial.println("CRITICAL ERROR: Write failed!");
+    writeFailures++;
+
+    // 1) Is the card genuinely full? (totalBytes() == 0 means it isn't responding)
+    uint64_t freeBytes = logStorageStatus();
+    if (SD.totalBytes() > 0 && freeBytes < 512) {
+      logMessage("Error Cause: Insufficient storage space on SD card. ");
+      stopRecording();                 // finalize the WAV header and close cleanly
+      while (true) {                   // nothing more to do until the card is swapped
+        digitalWrite(LED_DISC, HIGH);
+        delay(1250);
+        digitalWrite(LED_DISC, LOW);
+        delay(250);
       }
     }
+
+    // 2) Otherwise assume a card or bus fault
+    strlcpy(lastError, "write failed", sizeof(lastError));
+    if (writeFailures >= 3) {          // keeps failing: stop retrying and restart
+      esp_restart();
+    }
+
+    // 3) Re-mount the card and start a new file
+    isRecording = false;
+    file.close();                      // may fail on a dead card, which is harmless
+    if (!mountSD()) {
+      esp_restart();
+    }
+    startRecording();                  // has its own retry-then-restart logic
+    i2s_zero_dma_buffer(I2S_NUM);      // drop stale audio from the stall
+    recordingStartTime = millis();
 }
 
 // Function to get a String out of EEPROM safely
