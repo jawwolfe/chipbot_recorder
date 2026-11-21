@@ -617,13 +617,19 @@ void startRecording() {
   float temp = 0.0;
   float humidity = 0.0;
   float pressure = 0.0;
+  uint64_t totalBytes = SD.totalBytes();
+  uint64_t usedBytes = SD.usedBytes();
+  float freeMB = (totalBytes - usedBytes) / (1024.0 * 1024.0);
   if (bmeFound) {
     temp     = bme.readTemperature();
     humidity = bme.readHumidity();
     pressure = bme.readPressure() / 100.0F;
-    String msgBuffer = String("Temp: ") + temp + " °C | Hum: " + humidity + " % | Bat: " + batteryLevel + "\n";
+    char msgBuffer[112];
+    snprintf(msgBuffer, sizeof(msgBuffer),
+            "Temp: %.1f C | Hum: %.1f %% | Bat: %.1f%% | Free: %.1f MB\n",
+            temp, humidity, batteryLevel, freeMB);
     Serial.print(msgBuffer);
-    logMessage(msgBuffer.c_str());
+    logMessage(msgBuffer);
   } else {
     Serial.println("BME not found");
   }
@@ -636,6 +642,8 @@ void startRecording() {
     if (bmeFound) {
       updatedPayload += " | Temp:" + String(temp, 1) + "C" +
                         " | Hum:" + String(humidity, 1) + "%";
+      updatedPayload += " | Elapsed: 0m";
+      updatedPayload += " | Free:" + String(freeMB, 0) + "MB";
     }
     pCharacteristic->setValue(updatedPayload.c_str());
     pCharacteristic->notify(); // Pushes update directly to connected clients if subscriptions are enabled
