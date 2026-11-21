@@ -1,8 +1,7 @@
-#include <dummy.h>
 #include <Arduino.h>
 #include <SD.h>
 #include <SPI.h>
-#include <driver/i2s.h>
+#include <ESP_I2S.h>
 #include <FS.h>
 #include <Wire.h>
 #include <RTClib.h>
@@ -20,27 +19,8 @@ const int I2S_BCK_PIN = 4;
 const int I2S_WS_PIN = 5;
 const int I2S_SD_PIN = 6;
 const unsigned int SAMPLE_RATE = 48000;  // DVD quality
-constexpr i2s_port_t I2S_NUM = I2S_NUM_0;
 const int WAVE_HEADER_SIZE = 44;
-const i2s_config_t i2s_config = {
-  .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-  .sample_rate = SAMPLE_RATE,
-  .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,  
-  .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-  .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-  .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-  .dma_buf_count = 8,
-  .dma_buf_len = 1024,
-  .use_apll = false,
-  .tx_desc_auto_clear = false,
-  .fixed_mclk = 0
-};
-const i2s_pin_config_t pin_config = {
-  .bck_io_num = I2S_BCK_PIN,
-  .ws_io_num = I2S_WS_PIN,
-  .data_out_num = I2S_PIN_NO_CHANGE,
-  .data_in_num = I2S_SD_PIN
-};
+I2SClass i2s;
 
 // --- Recording constraints ---
 const unsigned long recordingTimeLimit = 200000; // 15 minute files is sweet spot (900k)
@@ -250,6 +230,7 @@ uint64_t logStorageStatus() {
   return freeBytes;
 }
 
+int writeFailures = 0;
 RTC_DATA_ATTR char lastError[64] = ""; 
 bool mountSD() {
   SD.end();
@@ -461,9 +442,13 @@ void setup() {
       esp_pm_configure(&pm_config);
     #endif
 
-    i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
-    i2s_set_pin(I2S_NUM, &pin_config);
-    i2s_zero_dma_buffer(I2S_NUM);
+    i2s.setPins(I2S_BCK_PIN, I2S_WS_PIN, -1, I2S_SD_PIN);   // bclk, ws, dout, din
+    if (!i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_32BIT,
+                  I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT)) {
+      Serial.println("I2S init failed!");
+      logMessage("I2S init failed! ");
+      while (1);
+    }
 
     Serial.println("System is Ready. Beginning continuous loop recording.");
     logMessage("System is Ready. Beginning continuous loop recording.");
@@ -548,7 +533,7 @@ void loop() {
       startRecording();
       recordingStartTime = millis();
     } else {
-      // Keep pushing I2S audio frames down to the SD card
+      // Keep pushing audio frames down to the SD card
       appendAudioToSD();
     }
   }
@@ -696,7 +681,6 @@ void startRecording() {
     }
     // Card is back. Log it now that the SD card works again.
     logMessage("File open failed; SD re-mounted OK and file opened.");
-    i2s_zero_dma_buffer(I2S_NUM);   // drop stale audio so the new file doesn't start with old samples
   }
 
   writeWavHeader(file, SAMPLE_RATE, 16, 1, 0);
@@ -719,22 +703,14 @@ void stopRecording() {
 }
 
 void appendAudioToSD() {
-    size_t bytesRead;
     int32_t i2sBuffer[256]; 
-    static uint8_t writeFailures = 0; 
-
-    i2s_read(I2S_NUM_0, (void *)i2sBuffer, sizeof(i2sBuffer), &bytesRead, portMAX_DELAY);
+    size_t bytesRead = i2s.readBytes((char *)i2sBuffer, sizeof(i2sBuffer));
+    int samplesCount = bytesRead / 4;
+    if (samplesCount == 0) return;   // read timed out
 
     int16_t samples16[256];
-    int samplesCount = bytesRead / 4;
-    if (samplesCount == 0) return;
-
     for (int i = 0; i < samplesCount; i++) {
-      // Downsample 32-bit to 16-bit
-      int32_t sample = i2sBuffer[i] >> 16;  
-      if (sample > 32767) sample = 32767;
-      if (sample < -32768) sample = -32768;
-      samples16[i] = (int16_t)sample;
+      samples16[i] = (int16_t)(i2sBuffer[i] >> 16);
     }
 
     // Write data to SD Card
@@ -775,7 +751,6 @@ void appendAudioToSD() {
       esp_restart();
     }
     startRecording();                  // has its own retry-then-restart logic
-    i2s_zero_dma_buffer(I2S_NUM);      // drop stale audio from the stall
     recordingStartTime = millis();
 }
 
