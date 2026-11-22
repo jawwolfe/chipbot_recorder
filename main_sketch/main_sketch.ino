@@ -527,6 +527,7 @@ void loop() {
   } else {
     unsigned long elapsed = millis() - recordingStartTime;
 
+    // Has our file cap expired? If so, cycle files.
     if (elapsed >= recordingTimeLimit) {
       stopRecording();
       startRecording();
