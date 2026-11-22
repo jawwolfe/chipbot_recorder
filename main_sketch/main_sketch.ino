@@ -23,7 +23,7 @@ const int WAVE_HEADER_SIZE = 44;
 I2SClass i2s;
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 200000; // 15 minute files is sweet spot (900k)
+const unsigned long recordingTimeLimit = 1200000; //20 minute files is sweet spot 
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -37,8 +37,8 @@ const int START_1_HR = 4;  // Window 1
 const int START_1_MIN = 30;
 const int STOP_1_HR = 11;    // Window 1 End
 const int STOP_1_MIN = 0;
-const int START_2_HR = 15;  // Window 2 Start
-const int START_2_MIN = 0;
+const int START_2_HR = 11;  // Window 2 Start
+const int START_2_MIN = 10;
 const int STOP_2_HR = 20;   // Window 2 End
 const int STOP_2_MIN = 30;
 
@@ -252,7 +252,7 @@ void setup() {
   digitalWrite(LED_DISC, LOW);
   pinMode(MOSFET_GATE_PIN, OUTPUT);
   digitalWrite(MOSFET_GATE_PIN, LOW);
-
+  setCpuFrequencyMhz(80);
   
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   // -- Initilize RTC
@@ -527,7 +527,6 @@ void loop() {
   } else {
     unsigned long elapsed = millis() - recordingStartTime;
 
-    // Has our 10-minute file cap expired? If so, cycle files.
     if (elapsed >= recordingTimeLimit) {
       stopRecording();
       startRecording();
