@@ -71,7 +71,8 @@ const int LED_DISC = 17; // yellow led for SD disc status full or not ready
 // -- used in startup disc check --
 int ledStateRecording = LOW; 
 // -- used in recording long blink when sampling--
-const long int_samp_blnk = 1000;
+const unsigned long LED_BLINK_PERIOD_MS = 3000;  // time between flashes
+const unsigned long LED_PULSE_MS = 40;           // how long each flash lasts
 unsigned long prevMillisBlnk = 0;   
 unsigned long lastRecBlinkTime = 0;
 unsigned long lastGPSBlinkTime = 0;
@@ -79,7 +80,7 @@ bool gpsLedState = false;
 bool ledStateRec = false;
 
 // --- BLUETOOTH BLE ---
-const char* const SERVICE_UUID        = "fdcff45e-438b-4a62-acf6-dbd852aae4b1";
+const char* const SERVICE_UUID = "fdcff45e-438b-4a62-acf6-dbd852aae4b1";
 const char* const CHARACTERISTIC_UUID = "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072";
 BLECharacteristic *pCharacteristic = nullptr;
 BLEAdvertising *pAdvertising = nullptr;
@@ -342,11 +343,6 @@ void setup() {
     batteryLevel = voltageToPercent(readBatteryVoltage());
     Serial.println("Battery Level...");
     Serial.println(String(batteryLevel));
-
-    Serial.printf("BAT_PIN=%d raw=%d pin_mV=%u batt_V=%.3f pct=%.0f\n",
-              BAT_PIN, analogRead(BAT_PIN), analogReadMilliVolts(BAT_PIN),
-              readBatteryVoltage(), batteryLevel);
-
     digitalWrite(MOSFET_GATE_PIN, LOW);
     Serial.println("In active window get GPS coordinates wait max 20 minutes.");
     logMessage("In active window get GPS coordinates wait max 20 minutes.");
@@ -540,11 +536,14 @@ void loop() {
   }
 
   if (isRecording) {
-    unsigned long currentMillis = millis();
-    if (currentMillis - lastRecBlinkTime >= 1200) {
-      lastRecBlinkTime = currentMillis;
-      ledStateRec = !ledStateRec; // Toggle the LED state
-      digitalWrite(LED_REC, ledStateRec);
+    unsigned long ms = millis();
+    if (!ledStateRec && ms - lastRecBlinkTime >= LED_BLINK_PERIOD_MS) {
+      lastRecBlinkTime = ms;          // start of a flash
+      ledStateRec = true;
+      digitalWrite(LED_REC, HIGH);
+    } else if (ledStateRec && ms - lastRecBlinkTime >= LED_PULSE_MS) {
+      ledStateRec = false;            // end of the flash
+      digitalWrite(LED_REC, LOW);
     }
   } else {
     // Ensure the LED is completely off when not recording
@@ -597,9 +596,17 @@ float voltageToPercent(float v) {
 }
 
 void startRecording() { 
-  // Fetch the current date and time from the DS3231 
+  // Fetch the current date and time from the DS3231
   DateTime now = rtc.now();
-  batteryLevel = voltageToPercent(readBatteryVoltage());
+  uint32_t pinMV = analogReadMilliVolts(BAT_PIN);
+  float batV = readBatteryVoltage();
+  batteryLevel = voltageToPercent(batV);
+  char batMsg[96];
+  snprintf(batMsg, sizeof(batMsg),
+           "BAT_PIN=%d raw=%d pin_mV=%u batt_V=%.3f pct=%.0f",
+           BAT_PIN, analogRead(BAT_PIN), (unsigned)pinMV, batV, batteryLevel);
+  Serial.println(batMsg);
+  logMessage(String(batMsg));
   float temp = 0.0;
   float humidity = 0.0;
   float pressure = 0.0;
