@@ -18,7 +18,7 @@
 const int I2S_BCK_PIN = 4;
 const int I2S_WS_PIN = 5;
 const int I2S_SD_PIN = 6;
-const unsigned int SAMPLE_RATE = 48000;  // DVD quality
+const unsigned int SAMPLE_RATE = 32000;
 const int WAVE_HEADER_SIZE = 44;
 I2SClass i2s;
 
@@ -221,7 +221,8 @@ uint64_t logStorageStatus() {
   String msg = "SD Storage: " + String(freeMB, 1) + " MB free / " + String(totalMB, 1) + " MB total";
   Serial.println(msg);
   logMessage(msg);
-  const float MB_PER_RECORDING = 5.76;
+  const float MB_PER_RECORDING =
+      (SAMPLE_RATE * 2.0f * (recordingTimeLimit / 1000.0f)) / (1024.0f * 1024.0f);
   if (freeMB < MB_PER_RECORDING * 2) {
     String warn = "WARNING: Low SD space - less than 2 recordings remaining!";
     Serial.println(warn);
