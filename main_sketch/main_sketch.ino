@@ -108,7 +108,6 @@ RTC_DS3231 rtc;
 Adafruit_BME280 bme;
 bool bmeFound = false;
 TinyGPSPlus gps;
-
 // Forward Declarations
 String readStringFromEEPROM(int address);
 void writeStringToEEPROM(int address, String data);
@@ -117,6 +116,7 @@ void startRecording();
 void stopRecording();
 void appendAudioToSD();
 void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels, int dataSize);
+void syncSystemClockFromRTC();
 
 void setLocalTimezone(float longitude, int year, int month, int day) {
     char tzString[32];
@@ -242,6 +242,14 @@ bool mountSD() {
   return SD.begin(SD_CS_PIN);
 }
 
+void syncSystemClockFromRTC() {
+  DateTime t = rtc.now();                 // DS3231 holds local time
+  setenv("TZ", "UTC0", 1);                // no conversion: system "local" = RTC local
+  tzset();
+  struct timeval tv = { .tv_sec = (time_t)t.unixtime(), .tv_usec = 0 };
+  settimeofday(&tv, NULL);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
@@ -299,6 +307,7 @@ void setup() {
   }
   // Get current time from the DS3231 module
   DateTime now = rtc.now();
+  syncSystemClockFromRTC();
 
   // Initialize Serial1
   Serial1.begin(9600, SERIAL_8N1, RXD1, TXD1);
@@ -394,6 +403,7 @@ void setup() {
       logMessage("Could not get a satellite lock in time. ");
     }
     digitalWrite(MOSFET_GATE_PIN, HIGH);
+    syncSystemClockFromRTC();
 
     // Synchronize our timers right as setup finishes
     char latStr[16];
@@ -598,6 +608,7 @@ float voltageToPercent(float v) {
 void startRecording() { 
   // Fetch the current date and time from the DS3231
   DateTime now = rtc.now();
+  syncSystemClockFromRTC();
   uint32_t pinMV = analogReadMilliVolts(BAT_PIN);
   float batV = readBatteryVoltage();
   batteryLevel = voltageToPercent(batV);
