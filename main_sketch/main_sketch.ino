@@ -23,7 +23,7 @@ const int WAVE_HEADER_SIZE = 44;
 I2SClass i2s;
 
 // --- Recording constraints ---
-const unsigned long recordingTimeLimit = 1200000; //20 minute files is sweet spot 
+const unsigned long recordingTimeLimit = 120000; //20 minute files is sweet spot 
 bool isRecording = false;
 unsigned long recordingStartTime = 0;
 
@@ -292,6 +292,14 @@ bool readRTC(DateTime &out) {
   return false;
 }
 
+bool initBME() {
+  for (int i = 0; i < 3; i++) {
+    if (bme.begin(0x76, &Wire) || bme.begin(0x77, &Wire)) return true;
+    delay(200);
+  }
+  return false;
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
@@ -315,12 +323,8 @@ void setup() {
     esp_restart();
   }
 
-  // Initialize BME280 on default Wire
-  if (bme.begin(BME280_I2C_ADDR, &Wire)) {
-     bmeFound = true;
-  } else {
-    Serial.println("BME280: NOT found! (Check wiring or try 0x76)");
-  }
+  bmeFound = initBME();
+  if (!bmeFound) Serial.println("BME280: NOT found (continuing without it)");
 
   //initialize SD keep trying
   bool sdOk = false;
@@ -671,7 +675,7 @@ float voltageToPercent(float v) {
 
 void startRecording() { 
   // Fetch the current date and time from the DS3231
-DateTime now;
+  DateTime now;
   if (!readRTC(now)) now = DateTime((uint32_t)(millis() / 1000));  // fallback filename timestamp
   syncSystemClockFromRTC();
   uint32_t pinMV = analogReadMilliVolts(BAT_PIN);
@@ -689,6 +693,7 @@ DateTime now;
   uint64_t totalBytes = SD.totalBytes();
   uint64_t usedBytes = SD.usedBytes();
   float freeMB = (totalBytes - usedBytes) / (1024.0 * 1024.0);
+  if (!bmeFound) bmeFound = bme.begin(BME280_I2C_ADDR, &Wire);
   if (bmeFound) {
     temp     = bme.readTemperature();
     humidity = bme.readHumidity();
@@ -701,6 +706,7 @@ DateTime now;
     logMessage(msgBuffer);
   } else {
     Serial.println("BME not found");
+    logMessage("BME not found ");
   }
   if (pCharacteristic != nullptr) {
     char latStr[16], lngStr[16];
