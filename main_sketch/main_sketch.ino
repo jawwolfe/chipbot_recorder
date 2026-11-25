@@ -250,6 +250,48 @@ void syncSystemClockFromRTC() {
   settimeofday(&tv, NULL);
 }
 
+void i2cBusRecovery() {
+  Wire.end();
+  pinMode(I2C_SDA_PIN, INPUT_PULLUP);
+  pinMode(I2C_SCL_PIN, OUTPUT);
+  digitalWrite(I2C_SCL_PIN, HIGH);
+  for (int i = 0; i < 9 && digitalRead(I2C_SDA_PIN) == LOW; i++) {  // clock out a stuck slave
+    digitalWrite(I2C_SCL_PIN, LOW);  delayMicroseconds(10);
+    digitalWrite(I2C_SCL_PIN, HIGH); delayMicroseconds(10);
+  }
+  pinMode(I2C_SDA_PIN, OUTPUT);                                      // generate a STOP condition
+  digitalWrite(I2C_SDA_PIN, LOW);  delayMicroseconds(10);
+  digitalWrite(I2C_SCL_PIN, HIGH); delayMicroseconds(10);
+  digitalWrite(I2C_SDA_PIN, HIGH); delayMicroseconds(10);
+  pinMode(I2C_SDA_PIN, INPUT_PULLUP);
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+}
+
+bool initRTC() {
+  for (int attempt = 1; attempt <= 5; attempt++) {
+    i2cBusRecovery();                    // includes Wire.begin()
+    delay(50);
+    if (rtc.begin()) return true;
+    Serial.printf("RTC init attempt %d failed\n", attempt);
+    delay(300 * attempt);
+  }
+  return false;
+}
+
+// Returns true only for a plausible time, so a failed read can't pass as a real one
+bool readRTC(DateTime &out) {
+  for (int i = 0; i < 3; i++) {
+    DateTime t = rtc.now();
+    if (t.year() >= 2020 && t.year() <= 2099 && t.month() >= 1 && t.month() <= 12 &&
+        t.hour() < 24 && t.minute() < 60) {
+      out = t;
+      return true;
+    }
+    delay(10);
+  }
+  return false;
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
@@ -264,12 +306,15 @@ void setup() {
   digitalWrite(MOSFET_GATE_PIN, LOW);
   setCpuFrequencyMhz(80);
   
-  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-  // -- Initilize RTC
-  if (!rtc.begin()) {
-    Serial.println("Error: Could not find DS3231 module. Check your wiring!");
-    while (1);
+  if (!initRTC()) {
+    strlcpy(lastError, "RTC not found in setup", sizeof(lastError));
+    for (int i = 0; i < 30; i++) {
+      digitalWrite(LED_DISC, i % 2);
+      delay(500);
+    }
+    esp_restart();
   }
+
   // Initialize BME280 on default Wire
   if (bme.begin(BME280_I2C_ADDR, &Wire)) {
      bmeFound = true;
@@ -299,14 +344,16 @@ void setup() {
     esp_restart();
   }
 
-  //needed in certain circumstances to set the RTC clock with PC time
-  //First use of RTC so the active period can be calculated before GPS
-  if (rtc.lostPower() || rtc.now().year() < 2020) {
-    Serial.println("RTC lost power or is uninitialized! Setting fallback to compile time...");
+  DateTime now;
+  bool haveTime = readRTC(now);
+  if (!haveTime && rtc.lostPower()) {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    haveTime = readRTC(now);
   }
-  // Get current time from the DS3231 module
-  DateTime now = rtc.now();
+  if (!haveTime) {
+    strlcpy(lastError, "RTC time invalid in setup", sizeof(lastError));
+    esp_restart();
+  }
   syncSystemClockFromRTC();
 
   // Initialize Serial1
@@ -561,27 +608,44 @@ void loop() {
     ledStateRec = false;
   }
 
-  // Dynamically check if our active window has just expired
-  DateTime now = rtc.now();
-  int currentMinutes = (now.hour() * 60) + now.minute();
-  int start1 = (START_1_HR * 60) + START_1_MIN;
-  int stop1  = (STOP_1_HR * 60) + STOP_1_MIN;
-  int start2 = (START_2_HR * 60) + START_2_MIN;
-  int stop2  = (STOP_2_HR * 60) + STOP_2_MIN;
+  // --- ACTIVE WINDOW CHECK (every 10 s, validated RTC read) ---
+  static unsigned long lastRtcCheck = 0;
+  static uint8_t rtcBadReads = 0;
+  if (millis() - lastRtcCheck >= 10000) {
+    lastRtcCheck = millis();
+    DateTime now;
+    if (readRTC(now)) {
+      rtcBadReads = 0;
+      int currentMinutes = (now.hour() * 60) + now.minute();
+      int start1 = (START_1_HR * 60) + START_1_MIN;
+      int stop1  = (STOP_1_HR * 60) + STOP_1_MIN;
+      int start2 = (START_2_HR * 60) + START_2_MIN;
+      int stop2  = (STOP_2_HR * 60) + STOP_2_MIN;
 
-  bool inWindow1 = (currentMinutes >= start1 && currentMinutes < stop1);
-  bool inWindow2 = (currentMinutes >= start2 && currentMinutes < stop2);
+      bool inWindow1 = (currentMinutes >= start1 && currentMinutes < stop1);
+      bool inWindow2 = (currentMinutes >= start2 && currentMinutes < stop2);
 
-  // If we drop out of BOTH windows, wrap up the current recording block and sleep
-  if (!inWindow1 && !inWindow2) {
-    Serial.println("Active window expired! Going to sleep.");
-    logMessage("Active window expired! Going to sleep. ");
-    if (isRecording) {
-      stopRecording();
+      // If we drop out of BOTH windows, wrap up the current recording block and sleep
+      if (!inWindow1 && !inWindow2) {
+        Serial.println("Active window expired! Going to sleep.");
+        logMessage("Active window expired! Going to sleep. ");
+        if (isRecording) {
+          stopRecording();
+        }
+        digitalWrite(MOSFET_GATE_PIN, HIGH);
+        strlcpy(lastError, "window expired", sizeof(lastError));
+        Serial.flush();
+        esp_restart();
+      }
+    } else {
+      // Bad or implausible RTC read: try to free the I2C bus, restart if it keeps failing
+      i2cBusRecovery();
+      if (++rtcBadReads >= 4) {
+        strlcpy(lastError, "RTC unreadable in loop", sizeof(lastError));
+        if (isRecording) stopRecording();
+        esp_restart();
+      }
     }
-    digitalWrite(MOSFET_GATE_PIN, HIGH);
-    Serial.flush();
-    esp_restart(); 
   }
 }
 
@@ -607,7 +671,8 @@ float voltageToPercent(float v) {
 
 void startRecording() { 
   // Fetch the current date and time from the DS3231
-  DateTime now = rtc.now();
+DateTime now;
+  if (!readRTC(now)) now = DateTime((uint32_t)(millis() / 1000));  // fallback filename timestamp
   syncSystemClockFromRTC();
   uint32_t pinMV = analogReadMilliVolts(BAT_PIN);
   float batV = readBatteryVoltage();
